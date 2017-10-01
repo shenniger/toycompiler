@@ -1,0 +1,37 @@
+; Kommentar
+; Typ als Funktion (nur Konstruktor)
+(+ 1 1 1)
+
+(a b c := (i8 0) (i16 -12) (u32 -43))
+(a = 10)
+(a .= + 5); add five to a
+
+; function
+(fn main () (
+  (v := 10)
+  (=> v)
+))
+
+(main)
+
+(fn f ((i8 a) (u16 b)) (+ a b))
+
+(a := (lambda (a) (+ 12 a)))
+
+(struct Point ((i8 a b)))
+(fn addPoint ((Point a b)) 
+  (Point (+ a.a b.a) (+ a.b b.b)))
+(fn subtractPoint ((Point a b)) 
+  (Point (- a.a b.a) (- a.b b.b)))
+(alias addPoint +)
+(alias subtractPoint -)
+
+(if (= 1 1) (
+  (print "Wohoo!")
+) (
+  (print "Mhmmm...")
+))
+
+(while true (
+  (print "infinite loop")
+))
