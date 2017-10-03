@@ -1,11 +1,23 @@
-TODO: EigenesScheme
+TODO List: EigenesScheme
+
+--- Core Language ---
 [X] Functions
 [X] Variables, Parameters
 [X] Arithmetic Operators
-[ ] Boolean Operators
-[ ] Bitwise Operators
-[ ] Comparison Operators
-[ ] Control Structures
+[X] Boolean Operators
+[X] Bitwise Operators
+[X] Comparison Operators
+[X] Control Structures
+[X] Proper function scopes
 [ ] Type System
-    [ ] Structs
+[ ] Structs
+[ ] Closures
+
+--- Compile-time ---
+[ ] Reader Extensions
+[ ] List what has to be done
+
+--- Stuff ---
 [ ] OOP
+[ ] Nicer name (say "CRISP"?)
+[ ] Save memory during compilation

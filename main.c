@@ -75,12 +75,16 @@ void compileError(struct LE l, const char *fmt, ...) {
 }
 
 int main() {
-  char testfile[] = "(defun a (x y z) (+ x y z 4))\n"
-                    "(defun main () ((print (+ (* 12 4) (- 5 5))) "
-                    "  (defun b () ((print 6) 5)) "
-                    "(print (+ 10 1))\n((var a) (set a 10) (set a (+ a 5)) "
-                    "(print a)) (print (+ "
-                    "23 2 (a 12 1 (+ 3 4)))) (- (b) 10 2 3)))\n";
+  char testfile[] =
+      "(defun fnA (x y z) (+ x y z 4 (if 0 1 (+ 2 2))))\n"
+      "(defun main () ((print (+ (* 12 4) (- 5 5))) "
+      "  (defun fnB () ((print 6) 5)) "
+      "(print (+ 10 1))\n((var a) (set a 10) (set a (+ a 5)) "
+      "(print a)) (print (+ "
+      "23 2 (fnA 12 1 (+ 3 4)))) (if 1 ((print 1))) ((var i) (set "
+      "i 0); Test\n (while 1 "
+      "((print i) (set; Test 2\n i (; Test 3\n+ i 1))))) (- "
+      "(fnB) 10 2 3)))\n";
   char testfile2[sizeof(testfile)];
   struct LE *list, l;
   memcpy(testfile2, testfile, sizeof(testfile));

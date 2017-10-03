@@ -56,7 +56,7 @@ void initCodegen() {
 void finalizeCodegen() { puts("/* EOF */"); }
 
 static int uniqueIntAt;
-static int uniqueInt() { return uniqueIntAt++; }
+static int uniqueInt() { return ++uniqueIntAt; }
 
 enum BExprFlags { efNonSelfSufficient = 0x1 };
 struct BExpr {
@@ -82,12 +82,12 @@ struct BExpr *intLiteral(int val) {
   return makeSimpleExpr(printToMem("%i", val), NULLSTR, NULLSTR,
                         efNonSelfSufficient);
 }
-struct BExpr *arithmeticOp(char op, struct BExpr *a, struct BExpr *b) {
-  int u;
+struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b) {
   struct BExpr *r;
-  if (op == '+' || op == '-' || op == '*') {
+  r = getMem(sizeof(struct BExpr));
+  if (*op == '+' || *op == '-' || *op == '*') {
+    int u;
     u = uniqueInt();
-    r = getMem(sizeof(struct BExpr));
     r->Var = b->Var;
     appendStringList(&r->Var, a->Var);
     r->Before = b->Before;
@@ -96,10 +96,27 @@ struct BExpr *arithmeticOp(char op, struct BExpr *a, struct BExpr *b) {
     appendString(&r->Before,
                  printToMem("  if(__builtin_%s_overflow(%s, %s, "
                             "&temporary__%i)) { /* TODO */ }",
-                            op == '+' ? "add" : op == '-' ? "sub" : "mul", a->A,
-                            b->A, u));
+                            *op == '+' ? "add" : *op == '-' ? "sub" : "mul",
+                            a->A, b->A, u));
     r->A = printToMem("temporary__%i", u);
+  } else {
+    appendStringList(&a->Var, b->Var);
+    appendStringList(&r->Var, a->Var);
+    appendStringList(&a->Before, b->Before);
+    appendStringList(&r->Before, a->Before);
+    r->Flags = efNonSelfSufficient;
+    r->A = printToMem("(%s %s %s)", a->A, op, b->A);
+    return r;
   }
+  return r;
+}
+struct BExpr *unaryOp(char op, struct BExpr *a) {
+  struct BExpr *r;
+  r = getMem(sizeof(struct BExpr));
+  appendStringList(&r->Var, a->Var);
+  appendStringList(&r->Before, a->Before);
+  r->Flags = efNonSelfSufficient;
+  r->A = printToMem("(%c%s)", op, a->A);
   return r;
 }
 struct BExpr *stringLiteral(const char *val) {
@@ -115,50 +132,15 @@ struct BParm {
   struct BVar V;
 };
 
-struct BScope {
-  struct StringList *Var;
-  struct StringList *Body;
-  struct BScope *Parent;
-};
 struct BFunction {
   const char *Name;
   struct BParm *Parms;
   long NParms;
   struct BFunction *Parent;
-  struct BScope Scope;
+  struct StringList *Var;
+  struct StringList *Body;
 };
 struct BFunction *curfn;
-struct BScope *curscope;
-
-struct BScope *beginScope() {
-  struct BScope *cur;
-  cur = curscope;
-  curscope = getMem(sizeof(struct BScope));
-  curscope->Parent = cur;
-  appendString(&curscope->Var, "{");
-  return curscope; /* never used */
-}
-struct BExpr *endScope(struct BScope *scope, struct BExpr *e) {
-  unsigned u;
-  struct BExpr *expr;
-  (void)scope;
-  u = uniqueInt();
-  expr = getMem(sizeof(struct BExpr));
-  appendString(&expr->Var, printToMem("int tmp_scoped_%i;", u));
-  if (e) {
-    appendStringList(&curscope->Var, e->Var);
-    appendStringList(&curscope->Body, e->Before);
-    appendString(&curscope->Body, printToMem("tmp_scoped_%i = %s;", u, e->A));
-  }
-  appendString(&curscope->Body, "}");
-
-  appendStringList(&curscope->Var, curscope->Body);
-  expr->Before = curscope->Var;
-  expr->A = printToMem("tmp_scoped_%i", u);
-  expr->Flags = efNonSelfSufficient;
-  curscope = curscope->Parent;
-  return expr;
-}
 
 void beginFnPrototype(const char *name) {
   struct BFunction *last;
@@ -183,30 +165,26 @@ struct BFunction *endFnPrototype(int addBody) {
     printProto(curfn);
     puts(");");
     curfn = curfn->Parent;
-  } else {
-    curfn->Scope.Parent = curscope;
-    curscope = &curfn->Scope;
   }
   return curfn;
 }
 void endFnBody(struct BExpr *e) {
   printProto(curfn);
   puts(") {");
-  printAll(curfn->Scope.Var);
+  printAll(curfn->Var);
   printAll(e->Var);
-  printAll(curfn->Scope.Body);
+  printAll(curfn->Body);
   printAll(e->Before);
   printf("  return %s;\n", e->A);
   puts("}");
   curfn = curfn->Parent;
-  curscope = curscope->Parent;
 }
 
 struct BVar *addVariable(const char *name) {
   struct BVar *a;
   a = getMem(sizeof(struct BVar));
   a->Name = name;
-  appendString(&curscope->Var, printToMem("int %s;", name));
+  appendString(&curfn->Var, printToMem("  int %s;", name));
   return a;
 }
 struct BVar *addParameter(const char *name) {
@@ -223,8 +201,8 @@ struct BExpr *varUsage(struct BVar *p) {
 struct BExpr *setVar(struct BExpr *lhs, struct BExpr *rhs) {
   appendStringList(&lhs->Var, rhs->Var);
   appendStringList(&lhs->Before, rhs->Before);
-  return makeSimpleExpr(printToMem("(%s = %s)", lhs->A, rhs->A),
-                        toOneString(lhs->Before), toOneString(lhs->Var), 0);
+  appendString(&lhs->Before, printToMem("  %s = %s;", lhs->A, rhs->A));
+  return lhs;
 }
 
 struct BIncompleteFuncall {
@@ -261,22 +239,67 @@ struct BExpr *endFuncall(struct BIncompleteFuncall *c) {
   return r;
 }
 
-struct BExpr *ifStmt(struct BExpr *cond, struct BExpr *iftrue,
-                     struct BExpr *iffalse) {
-  struct BExpr *r;
+void beginIfStmt(struct BExpr *cond) {
+  appendStringList(&curfn->Var, cond->Var);
+  appendStringList(&curfn->Body, cond->Before);
+  appendString(&curfn->Body, printToMem("if(%s) {", cond->A));
+}
+void endIfStmt(struct BExpr *r) {
+  addEvaluation(r);
+  appendString(&curfn->Body, "}");
+}
+void beginIfElseStmt(struct BExpr *cond) {
+  appendStringList(&curfn->Var, cond->Var);
+  appendStringList(&curfn->Body, cond->Before);
+  appendString(&curfn->Body, printToMem("if(%s) {", cond->A));
+}
+void *elseIfStmt(struct BExpr *r) {
+  if (r) {
+    unsigned u;
+    u = uniqueInt();
+    appendStringList(&curfn->Var, r->Var);
+    appendStringList(&curfn->Body, r->Before);
+    appendString(&curfn->Var, printToMem("  int tmp_if_%i;", u));
+    appendString(&curfn->Body,
+                 printToMem("  tmp_if_%i = %s;\n} else {", u, r->A));
+    return (void *)u;
+  } else {
+    appendString(&curfn->Body, "  } else {");
+    return NULL;
+  }
+}
+struct BExpr *endIfElseStmt(void *last, struct BExpr *r) {
   unsigned u;
-  u = uniqInt();
-  r = getMem(sizeof(struct BExpr));
-  r->Flags = efNonSelfSufficient;
-  /* TODO */
-  r->A = printToMem("tmp_if_%i", u);
-  return r;
+  u = (unsigned)last;
+  if (u && r) {
+    appendStringList(&curfn->Var, r->Var);
+    appendStringList(&curfn->Body, r->Before);
+    appendString(&curfn->Body, printToMem("  tmp_if_%i = %s;\n}", u, r->A));
+    return makeSimpleExpr(printToMem("tmp_if_%i", u), NULLSTR, NULLSTR,
+                          efNonSelfSufficient);
+  } else {
+    appendString(&curfn->Body, "  }");
+    return NULL;
+  }
 }
 
+void beginWhileLoop(struct BExpr *cond) {
+  appendStringList(&curfn->Var, cond->Var);
+  appendStringList(&curfn->Body, cond->Before);
+  appendString(&curfn->Body, printToMem("while(%s) {", cond->A));
+}
+void endWhileLoop(struct BExpr *r) {
+  addEvaluation(r);
+  appendString(&curfn->Body, "}");
+}
+
+void breakLoop() { appendString(&curfn->Body, "  break;"); }
+void continueLoop() { appendString(&curfn->Body, "  continue;"); }
+
 void TODO_print(struct BExpr *a) {
-  appendStringList(&curscope->Var, a->Var);
-  appendStringList(&curscope->Body, a->Before);
-  appendString(&curscope->Body,
+  appendStringList(&curfn->Var, a->Var);
+  appendStringList(&curfn->Body, a->Before);
+  appendString(&curfn->Body,
                printToMem("  printf(\"VAL: %%i\\n\", %s);", a->A));
 }
 
@@ -285,9 +308,9 @@ void addEvaluation(struct BExpr *a) {
     return;
   }
 
-  appendStringList(&curscope->Var, a->Var);
-  appendStringList(&curscope->Body, a->Before);
+  appendStringList(&curfn->Var, a->Var);
+  appendStringList(&curfn->Body, a->Before);
   if (!(a->Flags & efNonSelfSufficient)) {
-    appendString(&curscope->Body, printToMem("  %s;", a->A));
+    appendString(&curfn->Body, printToMem("  %s;", a->A));
   }
 }

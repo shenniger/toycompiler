@@ -19,8 +19,15 @@ struct FVar {
   struct FVar *Next;
 };
 
+struct FLocalFun {
+  struct FFunction *Fn;
+  struct FLocalFun *Last;
+};
+
 struct FScope {
+  /* on adding new members: add zero initialization in "parse" */
   struct FVar *Vars;
+  struct FLocalFun *Funs;
 
   struct FScope *Parent;
 };
@@ -50,9 +57,9 @@ static unsigned long hashName(const char *s) {
 }
 
 /* TODO: closures */
-static void parseDefun(struct LE *li) {
+static void parseDefun(struct LE *li, struct FScope *scope, int lvl) {
   /* TODO: error */
-  struct FFunction *fn;
+  struct FFunction *fn, *lastfn;
   struct LE *l;
   unsigned i;
   beginFnPrototype(li->V.S);
@@ -73,23 +80,26 @@ static void parseDefun(struct LE *li) {
   }
   fn->Last = functions;
   functions = fn;
+  lastfn = currentffunction;
   currentffunction = fn;
   fn->Backend = endFnPrototype(1 /* add body */);
 
-  if (!li->N->N->V.L) {
-    compileError(*li->N->N->V.L, "empty list as function body");
-  }
-  if (li->N->N->V.L->T != tyList) {
-    endFnBody(parse(li->N->N, lvFun));
-  } else {
-    for (l = li->N->N->V.L; l && l->N; l = l->N) {
-      addEvaluation(parse(l, lvFun));
-    }
-    endFnBody(parse(l, lvFun));
+  endFnBody(parse(li->N->N, lvFun));
+
+  if (lvl & lvFun) {
+    struct FLocalFun *f;
+
+    functions = fn->Last;
+    currentffunction = lastfn;
+
+    f = scope->Funs;
+    scope->Funs = getMem(sizeof(struct FLocalFun));
+    scope->Funs->Last = f;
+    scope->Funs->Fn = fn;
   }
 }
 
-static struct BExpr *parseArm(struct LE *li, char op) {
+static struct BExpr *parseArm(struct LE *li, const char *op) {
   struct BExpr *e;
   struct LE *l;
   e = arithmeticOp(op, parse(li, lvFun), parse(li->N, lvFun)); /* TODO: error */
@@ -99,17 +109,48 @@ static struct BExpr *parseArm(struct LE *li, char op) {
   return e;
 }
 
-static struct BExpr *parseIf(struct LE *li) {
+static struct BExpr *parseIf(struct LE *li, int lvl) {
   /* TODO: errors */
-  return ifStmt(parse(li, lvFun), parse(li->N, lvFun),
-                li->N->N ? parse(li->N->N, lvFun) : NULL);
+  struct FScope newscope;
+  struct BExpr *e;
+  newscope.Vars = NULL;
+  newscope.Parent = curscope;
+  curscope = &newscope;
+  if (li->N->N) {
+    /* if - else */
+    void *l;
+    beginIfElseStmt(parse(li, lvl));
+    l = elseIfStmt(parse(li->N, lvl));
+    e = endIfElseStmt(l, parse(li->N->N, lvl));
+  } else {
+    /* if without else */
+    beginIfStmt(parse(li, lvl));
+    endIfStmt(parse(li->N, lvl));
+    e = NULL;
+  }
+  curscope = curscope->Parent;
+  return e;
+}
+static struct BExpr *parseWhile(struct LE *li, int lvl) {
+  struct FScope newscope;
+  newscope.Vars = NULL;
+  newscope.Parent = curscope;
+  curscope = &newscope;
+  beginWhileLoop(parse(li, lvl));
+  endWhileLoop(parse(li->N, lvl | lvLoop));
+  curscope = curscope->Parent;
+  return NULL;
 }
 
 enum {
   bcNoBuiltin,
   bcDefun,
   bcArm,
+  bcUnary,
   bcIf,
+  bcWhile,
+  bcBreak,
+  bcContinue,
   bcTODO_Print,
   bcTODO_Set,
   bcTODO_Var
@@ -119,7 +160,7 @@ struct BuiltinCommand {
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinCommand builtincommands[8];
+static struct BuiltinCommand builtincommands[24];
 
 void initParser() {
   unsigned i;
@@ -137,7 +178,22 @@ void initParser() {
   ADDCMD("-", bcArm)
   ADDCMD("*", bcArm)
   ADDCMD("/", bcArm)
+  ADDCMD("&&", bcArm)
+  ADDCMD("||", bcArm)
+  ADDCMD("<<", bcArm)
+  ADDCMD(">>", bcArm)
+  ADDCMD("==", bcArm)
+  ADDCMD("!=", bcArm)
+  ADDCMD("<", bcArm)
+  ADDCMD(">", bcArm)
+  ADDCMD("<=", bcArm)
+  ADDCMD(">=", bcArm)
+  ADDCMD("!", bcUnary)
+  ADDCMD("~", bcUnary)
   ADDCMD("if", bcIf)
+  ADDCMD("while", bcWhile)
+  ADDCMD("break", bcBreak)
+  ADDCMD("continue", bcContinue)
   ADDCMD("print", bcTODO_Print)
   ADDCMD("set", bcTODO_Set)
   ADDCMD("var", bcTODO_Var)
@@ -164,33 +220,52 @@ static int lookupBuiltin(const char *name, unsigned long hash) {
   return bcNoBuiltin;
 }
 
-struct BExpr *parseFuncall(struct LE *li, unsigned long hash) {
+struct FFunction *findFunction(const char *name, unsigned long hash,
+                               struct FScope *scope) {
+  struct FScope *sc;
   struct FFunction *fn;
-  for (fn = functions; fn; fn = fn->Last) {
-    if (fn->HashedName == hash && strcmp(fn->Name, li->V.S) == 0) {
-      struct BIncompleteFuncall *c;
-      struct LE *l;
-      unsigned argsLen;
-      c = beginFuncall(fn->Backend);
-      argsLen = 0;
-      for (l = li->N; l; l = l->N) {
-        if (argsLen == fn->NParms) {
-          compileError(*li, "too many arguments for function \"%s\"", li->V.S);
-        }
-        addArg(c, parse(l, lvFun));
-        ++argsLen;
+  for (sc = scope; sc; sc = sc->Parent) {
+    struct FLocalFun *fn;
+    for (fn = sc->Funs; fn; fn = fn->Last) {
+      if (fn->Fn->HashedName == hash && strcmp(fn->Fn->Name, name) == 0) {
+        return fn->Fn;
       }
-      if (argsLen < fn->NParms) {
-        compileError(*li, "too few arguments for function \"%s\"", li->V.S);
-      }
-      return endFuncall(c);
     }
   }
-  compileError(*li, "unknown function: \"%s\"", li->V.S);
+  for (fn = functions; fn; fn = fn->Last) {
+    if (fn->HashedName == hash && strcmp(fn->Name, name) == 0) {
+      return fn;
+    }
+  }
   return NULL;
 }
 
-struct BExpr *parse(struct LE *l, enum ParserLevel lvl) {
+struct BExpr *parseFuncall(struct LE *li, unsigned long hash,
+                           struct FScope *scope) {
+  struct FFunction *fn;
+  struct BIncompleteFuncall *c;
+  struct LE *l;
+  unsigned argsLen;
+  fn = findFunction(li->V.S, hash, scope);
+  if (!fn) {
+    compileError(*li, "unknown function: \"%s\"", li->V.S);
+  }
+  c = beginFuncall(fn->Backend);
+  argsLen = 0;
+  for (l = li->N; l; l = l->N) {
+    if (argsLen == fn->NParms) {
+      compileError(*li, "too many arguments for function \"%s\"", li->V.S);
+    }
+    addArg(c, parse(l, lvFun));
+    ++argsLen;
+  }
+  if (argsLen < fn->NParms) {
+    compileError(*li, "too few arguments for function \"%s\"", li->V.S);
+  }
+  return endFuncall(c);
+}
+
+struct BExpr *parse(struct LE *l, int lvl) {
   if (!l) {
     return NULL;
   }
@@ -232,17 +307,16 @@ struct BExpr *parse(struct LE *l, enum ParserLevel lvl) {
       hash = hashName(li->V.S);
       builtin = lookupBuiltin(li->V.S, hash);
       switch (builtin) {
-      case bcNoBuiltin: {
-        return parseFuncall(li, hash);
-      }
+      case bcNoBuiltin:
+        return parseFuncall(li, hash, curscope);
       case bcDefun:
-        parseDefun(li->N);
+        parseDefun(li->N, curscope, lvl);
         break;
       case bcTODO_Print:
-        TODO_print(parse(li->N, lvFun));
+        TODO_print(parse(li->N, lvl));
         break;
       case bcTODO_Set:
-        return setVar(parse(li->N, lvFun), parse(li->N->N, lvFun));
+        return setVar(parse(li->N, lvl), parse(li->N->N, lvl));
       case bcTODO_Var: {
         struct FVar *last;
         last = curscope->Vars;
@@ -254,32 +328,47 @@ struct BExpr *parse(struct LE *l, enum ParserLevel lvl) {
         return varUsage(curscope->Vars->Backend);
       } break;
       case bcArm:
-        return parseArm(li->N, *li->V.S);
+        return parseArm(li->N, li->V.S);
+      case bcUnary:
+        return unaryOp(*li->V.S, parse(li->N, lvl));
       case bcIf:
-        return parseIf(li->N);
+        return parseIf(li->N, lvl);
+      case bcWhile:
+        return parseWhile(li->N, lvl);
+      case bcBreak:
+        if (!(lvl & lvLoop)) {
+          compileError(*li, "break/continue outside of a loop");
+        }
+        breakLoop();
+        return NULL;
+      case bcContinue:
+        if (!(lvl & lvLoop)) {
+          compileError(*li, "break/continue outside of a loop");
+        }
+        continueLoop();
+        return NULL;
       }
     } else if (l->V.L->T == tyList) { /* group expression */
-      if (lvl == lvFun) {
+      if (lvl & lvFun) {
         struct FScope newscope;
         struct LE *li;
         struct BExpr *e;
-        struct BScope *backend;
         newscope.Vars = NULL;
+        newscope.Funs = NULL;
         newscope.Parent = curscope;
         curscope = &newscope;
-        backend = beginScope();
         for (li = l->V.L; li && li->N; li = li->N) {
-          addEvaluation(parse(li, lvFun));
+          addEvaluation(parse(li, lvl));
         }
-        e = endScope(backend, parse(li, lvFun));
+        e = parse(li, lvl);
         curscope = curscope->Parent;
         return e;
-      } else if (lvl == lvTop) {
+      } else if (lvl & lvTop) {
         struct LE *li;
         for (li = l->V.L; li && li->N; li = li->N) {
-          parse(li, lvTop);
+          parse(li, lvl);
         }
-        return parse(li, lvTop);
+        return parse(li, lvl);
       }
     } else {
       compileError(*l, "a list (in code mode) must start with either another "
