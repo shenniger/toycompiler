@@ -75,7 +75,7 @@ void compileError(struct LE l, const char *fmt, ...) {
 }
 
 int main() {
-  char testfile[] =
+  /*char testfile[] =
       "(defun fnA (x y z) (+ x y z 4 (if 0 1 (+ 2 2))))\n"
       "(defun main () ((print (+ (* 12 4) (- 5 5))) "
       "  (defun fnB () ((print 6) 5)) "
@@ -84,19 +84,25 @@ int main() {
       "23 2 (fnA 12 1 (+ 3 4)))) (if 1 ((print 1))) ((var i) (set "
       "i 0); Test\n (while 1 "
       "((print i) (set; Test 2\n i (; Test 3\n+ i 1))))) (- "
-      "(fnB) 10 2 3)))\n";
+      "(fnB) 10 2 3)))\n";*/
+  char testfile[] = "(alias MyInt i64)\n"
+                    "(alias MyInt2 MyInt) (alias MyInt3 MyInt2)\n"
+                    "(defun fnA ((MyInt a) (i64 b)) MyInt3 (+ a b))\n"
+                    "(defun main () i32 (\n"
+                    "  (var i64 x)\n"
+                    "  (set x 10)\n"
+                    "  (print (fnA 10 x))\n"
+                    "  4))";
   char testfile2[sizeof(testfile)];
-  struct LE *list, l;
+  struct LE *list;
   memcpy(testfile2, testfile, sizeof(testfile));
   sourcefile = testfile2;
   initAlloc();
   readList(testfile, &list, testfile, 0);
-  l.T = tyList;
-  l.V.L = list;
   /*printList(list, 0);*/
   initCodegen();
   initParser();
-  parse(&l, lvTop);
+  parseSrc(list);
   finalizeCodegen();
   return 0;
 }

@@ -52,11 +52,28 @@ static char *toOneString(struct StringList *sl) {
 void initCodegen() {
   puts("/* A generated C file. */");
   puts("#include <stdio.h>");
+  puts("#include <stdint.h>");
 }
 void finalizeCodegen() { puts("/* EOF */"); }
 
 static int uniqueIntAt;
 static int uniqueInt() { return ++uniqueIntAt; }
+
+struct BType {
+  const char *A;
+};
+static struct BType *makeSimpleType(const char *a) {
+  struct BType *r;
+  r = getMem(sizeof(struct BType));
+  r->A = a;
+  return r;
+}
+struct BType *voidType() {
+  return makeSimpleType("void");
+}
+struct BType *intType(int issigned, int size) { /* size in bytes */
+  return makeSimpleType(printToMem("%sint%i_t", issigned ? "" : "u", size * 8));
+}
 
 enum BExprFlags { efNonSelfSufficient = 0x1 };
 struct BExpr {
@@ -82,7 +99,18 @@ struct BExpr *intLiteral(int val) {
   return makeSimpleExpr(printToMem("%i", val), NULLSTR, NULLSTR,
                         efNonSelfSufficient);
 }
-struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b) {
+struct BExpr *stringLiteral(const char *val) {
+  return makeSimpleExpr(printToMem("\"%s\"", val), NULLSTR, NULLSTR,
+                        efNonSelfSufficient);
+}
+
+struct BExpr *castInt(struct BExpr *a, struct BType *t) {
+  a->A = printToMem("((%s)%s)", t->A, a->A);
+  return a;
+}
+
+struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b,
+                           int result_signed, int result_size) {
   struct BExpr *r;
   r = getMem(sizeof(struct BExpr));
   if (*op == '+' || *op == '-' || *op == '*') {
@@ -92,7 +120,9 @@ struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b) {
     appendStringList(&r->Var, a->Var);
     r->Before = b->Before;
     appendStringList(&r->Before, a->Before);
-    appendString(&r->Var, printToMem("  int temporary__%i;", u));
+    appendString(&r->Var,
+                 printToMem("  %sint%i_t temporary__%i;",
+                            result_signed ? "" : "u", result_size * 8, u));
     appendString(&r->Before,
                  printToMem("  if(__builtin_%s_overflow(%s, %s, "
                             "&temporary__%i)) { /* TODO */ }",
@@ -110,18 +140,16 @@ struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b) {
   }
   return r;
 }
-struct BExpr *unaryOp(char op, struct BExpr *a) {
+struct BExpr *unaryOp(char op, struct BExpr *a, int result_signed,
+                      int result_size) {
   struct BExpr *r;
+  (void)result_signed, (void)result_size;
   r = getMem(sizeof(struct BExpr));
   appendStringList(&r->Var, a->Var);
   appendStringList(&r->Before, a->Before);
   r->Flags = efNonSelfSufficient;
   r->A = printToMem("(%c%s)", op, a->A);
   return r;
-}
-struct BExpr *stringLiteral(const char *val) {
-  return makeSimpleExpr(printToMem("\"%s\"", val), NULLSTR, NULLSTR,
-                        efNonSelfSufficient);
 }
 
 struct BVar {
@@ -130,6 +158,7 @@ struct BVar {
 
 struct BParm {
   struct BVar V;
+  struct BType *T;
 };
 
 struct BFunction {
@@ -139,25 +168,27 @@ struct BFunction {
   struct BFunction *Parent;
   struct StringList *Var;
   struct StringList *Body;
+  struct BType *RetType;
 };
 struct BFunction *curfn;
 
-void beginFnPrototype(const char *name) {
+void beginFnPrototype(const char *name, struct BType *rettype) {
   struct BFunction *last;
   last = curfn;
   curfn = getMem(sizeof(struct BFunction));
   curfn->Name = name;
   curfn->Parent = last;
+  curfn->RetType = rettype;
 }
 /* prints prototype; DOES NOT PRINT ');' or ') {'!!! */
 static void printProto(struct BFunction *f) {
   unsigned i;
-  printf("int %s(", curfn->Name);
+  printf("%s %s(", f->RetType->A, f->Name);
   for (i = 0; i < f->NParms; ++i) {
     if (i) {
       fputs(", ", stdout);
     }
-    printf("int %s", f->Parms[i].V.Name);
+    printf("%s %s", f->Parms[i].T->A, f->Parms[i].V.Name);
   }
 }
 struct BFunction *endFnPrototype(int addBody) {
@@ -172,25 +203,29 @@ void endFnBody(struct BExpr *e) {
   printProto(curfn);
   puts(") {");
   printAll(curfn->Var);
-  printAll(e->Var);
+  if (e)
+    printAll(e->Var);
   printAll(curfn->Body);
-  printAll(e->Before);
-  printf("  return %s;\n", e->A);
+  if (e)
+    printAll(e->Before);
+  if (e)
+    printf("  return %s;\n", e->A);
   puts("}");
   curfn = curfn->Parent;
 }
 
-struct BVar *addVariable(const char *name) {
+struct BVar *addVariable(const char *name, struct BType *type) {
   struct BVar *a;
   a = getMem(sizeof(struct BVar));
   a->Name = name;
-  appendString(&curfn->Var, printToMem("  int %s;", name));
+  appendString(&curfn->Var, printToMem("  %s %s;", type->A, name));
   return a;
 }
-struct BVar *addParameter(const char *name) {
+struct BVar *addParameter(const char *name, struct BType *type) {
   curfn->Parms = moreMem(curfn->Parms, sizeof(struct BParm) * curfn->NParms,
                          sizeof(struct BParm));
   curfn->Parms[curfn->NParms].V.Name = name;
+  curfn->Parms[curfn->NParms].T = type;
   return &curfn->Parms[curfn->NParms++].V;
 }
 struct BExpr *varUsage(struct BVar *p) {
@@ -253,13 +288,13 @@ void beginIfElseStmt(struct BExpr *cond) {
   appendStringList(&curfn->Body, cond->Before);
   appendString(&curfn->Body, printToMem("if(%s) {", cond->A));
 }
-void *elseIfStmt(struct BExpr *r) {
+void *elseIfStmt(struct BExpr *r, struct BType *rettype) {
   if (r) {
     unsigned u;
     u = uniqueInt();
     appendStringList(&curfn->Var, r->Var);
     appendStringList(&curfn->Body, r->Before);
-    appendString(&curfn->Var, printToMem("  int tmp_if_%i;", u));
+    appendString(&curfn->Var, printToMem("  %s tmp_if_%i;", rettype->A, u));
     appendString(&curfn->Body,
                  printToMem("  tmp_if_%i = %s;\n} else {", u, r->A));
     return (void *)u;
@@ -288,10 +323,7 @@ void beginWhileLoop(struct BExpr *cond) {
   appendStringList(&curfn->Body, cond->Before);
   appendString(&curfn->Body, printToMem("while(%s) {", cond->A));
 }
-void endWhileLoop(struct BExpr *r) {
-  addEvaluation(r);
-  appendString(&curfn->Body, "}");
-}
+void endWhileLoop() { appendString(&curfn->Body, "}"); }
 
 void breakLoop() { appendString(&curfn->Body, "  break;"); }
 void continueLoop() { appendString(&curfn->Body, "  continue;"); }

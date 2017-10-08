@@ -9,8 +9,14 @@ TODO List: EigenesScheme
 [X] Comparison Operators
 [X] Control Structures
 [X] Proper function scopes
-[ ] Type System
+[X] Type System
+[ ] Function Aliases (and Function Overloading)
+[X] Type Aliases
+[ ] Floats
 [ ] Structs
+[ ] Pointers
+[ ] Function Prototypes
+[ ] Static/Inline Functions
 [ ] Closures
 
 --- Compile-time ---
@@ -21,3 +27,4 @@ TODO List: EigenesScheme
 [ ] OOP
 [ ] Nicer name (say "CRISP"?)
 [ ] Save memory during compilation
+[ ] Initial LLVM Backend
