@@ -10,21 +10,37 @@ TODO List: EigenesScheme
 [X] Control Structures
 [X] Proper function scopes
 [X] Type System
-[ ] Function Aliases (and Function Overloading)
+[X] Function Aliases (and Function Overloading)
 [X] Type Aliases
-[ ] Floats
-[ ] Structs
-[ ] Pointers
-[ ] Function Prototypes
-[ ] Static/Inline Functions
+[X] Floats
+[X] Function Prototypes
+[X] Static/Inline Functions
+[X] Explicit Casts
+[X] Structs
+[X] Constness
+[X] Pointers
+[X] String Literals
+[X] Function Pointers
+[X] Stack Arrays
+[X] Struct Equals
+
+--- Advanced language features ---
 [ ] Closures
+[ ] Vectors
+[ ] Operator Overloading
+[ ] Custom conversions
+[ ] Auto-Arg Closures
+[ ] Proper C Types and Chars
 
 --- Compile-time ---
 [ ] Reader Extensions
+[ ] Attributes
 [ ] List what has to be done
 
 --- Stuff ---
+[ ] Reading files
+[ ] Including files
 [ ] OOP
-[ ] Nicer name (say "CRISP"?)
 [ ] Save memory during compilation
 [ ] Initial LLVM Backend
+[ ] Nicer name (say "CRISP"?)
