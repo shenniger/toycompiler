@@ -166,8 +166,10 @@ static unsigned countLen(struct LE *l) {
 
 unsigned long hashName(const char *s) {
   unsigned long res;
-  while (*s++) {
-    res = *s * 11;
+  res = 0;
+  while (*s) {
+    res = (res + *s) * 11;
+    ++s;
   }
   return res;
 }

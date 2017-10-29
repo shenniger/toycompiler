@@ -34,9 +34,9 @@ TODO List: EigenesScheme
 [ ] Proper C Types and Chars
 
 --- Compile-time ---
-[ ] Basic language features at compile-time
+[X] Basic language features at compile-time
 [ ] Functions
-[ ] Better type system (of which type is something? convert string to int etc.)
+[X] Better type system (of which type is something? convert string to int etc.)
 [ ] Lambdas
 [ ] Function Macros
 [ ] Member Macros

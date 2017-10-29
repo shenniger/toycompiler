@@ -1,7 +1,13 @@
 #include "prg.h"
 
 #include <assert.h>
+#include <math.h>
+#include <stdlib.h>
 #include <string.h>
+
+enum { tyMiddleEndType = tyEnd, tyFun };
+
+struct MFun {};
 
 struct MVar {
   unsigned long HashedName;
@@ -31,6 +37,9 @@ enum {
   bmCmp,
   bmEqual,
   bmUnary,
+  bmRound,
+  bmTrunc,
+  bmCeil,
   bmIf,
   bmWhile,
   bmVar,
@@ -39,6 +48,16 @@ enum {
   bmScope,
   bmAppend,
   bmAppendFirst,
+  bmStringToInt,
+  bmStringToFloat,
+  bmNumToString,
+  bmIsList,
+  bmIsString,
+  bmIsIdent,
+  bmIsInt,
+  bmIsFloat,
+  bmToIdent,
+  bmToString,
   bmDebugPrint
 };
 struct BuiltinMacro {
@@ -46,7 +65,7 @@ struct BuiltinMacro {
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinMacro builtinmacros[35];
+static struct BuiltinMacro builtinmacros[50];
 
 void initEvaluator() {
   unsigned i;
@@ -96,6 +115,21 @@ void initEvaluator() {
   ADDM(">=", bmCmp)
   ADDM("!", bmUnary)
   ADDM("~", bmUnary)
+  ADDM("round", bmRound)
+  ADDM("trunc", bmTrunc)
+  ADDM("ceil", bmCeil)
+  ADDM("string-to-int", bmStringToInt)
+  ADDM("string-to-float", bmStringToFloat)
+  ADDM("num-to-string", bmNumToString)
+  ADDM("int-to-string", bmNumToString)
+  ADDM("float-to-string", bmNumToString)
+  ADDM("is-list", bmIsList)
+  ADDM("is-string", bmIsString)
+  ADDM("is-ident", bmIsIdent)
+  ADDM("is-int", bmIsInt)
+  ADDM("is-float", bmIsFloat)
+  ADDM("string-to-ident", bmToIdent)
+  ADDM("ident-to-string", bmToString)
 
 #undef ADDM
 
@@ -361,6 +395,126 @@ struct LE *evalFuncall(struct LE *li) {
     return evalCmp(li);
   case bmArm:
     return evalArm(li);
+  case bmRound: {
+    struct LE *r; /* TODO: error */
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyInt;
+    r->V.I = round(evalList(li->N)->V.F);
+    return r;
+  }
+  case bmTrunc: {
+    struct LE *r; /* TODO: error */
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyInt;
+    r->V.I = trunc(evalList(li->N)->V.F);
+    return r;
+  }
+  case bmCeil: {
+    struct LE *r; /* TODO: error */
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyInt;
+    r->V.I = ceil(evalList(li->N)->V.F);
+    return r;
+  }
+  case bmStringToInt: {
+    struct LE *r; /* TODO: error */
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyInt;
+    r->V.I = strtol(evalList(li->N)->V.S, NULL, 10);
+    return r;
+  }
+  case bmStringToFloat: {
+    struct LE *r; /* TODO: error */
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyFloat;
+    r->V.I = strtod(evalList(li->N)->V.S, NULL);
+    return r;
+  }
+  case bmNumToString: {
+    struct LE *r, *l;
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyString;
+    l = evalList(li->N);
+    if (l->T == tyInt) {
+      r->V.S = printToMem("%i", l->V.I);
+    } else if (li->N->T == tyFloat) {
+      r->V.S = printToMem("%f", l->V.F);
+    } else {
+      compileError(*li->N, "%s: wrong type", li->V.S);
+    }
+    return r;
+  }
+  case bmIsList: {
+    struct LE *r;
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyInt;
+    r->V.I = evalList(li->N)->T == tyList;
+    return r;
+  }
+  case bmIsString: {
+    struct LE *r;
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyInt;
+    r->V.I = evalList(li->N)->T == tyString;
+    return r;
+  }
+  case bmIsIdent: {
+    struct LE *r;
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyInt;
+    r->V.I = evalList(li->N)->T == tyIdent;
+    return r;
+  }
+  case bmIsInt: {
+    struct LE *r;
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyInt;
+    r->V.I = evalList(li->N)->T == tyInt;
+    return r;
+  }
+  case bmIsFloat: {
+    struct LE *r;
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyInt;
+    r->V.I = evalList(li->N)->T == tyFloat;
+    return r;
+  }
+  case bmToIdent: {
+    struct LE *r, *l;
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyIdent;
+    l = evalList(li->N);
+    if (l->T != tyString) {
+      compileError(*li->N, "%s: wrong type (expected string)", li->V.S);
+    }
+    /* TODO: check whether it contains special characters (like ' ' or ')' */
+    r->V.S = l->V.S;
+    return r;
+  }
+  case bmToString: {
+    struct LE *r, *l;
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyString;
+    l = evalList(li->N);
+    if (l->T != tyIdent) {
+      compileError(*li->N, "%s: wrong type (expected ident)", li->V.S);
+    }
+    r->V.S = l->V.S;
+    return r;
+  }
   case bmIf:
     checkArgs(li, 3);
     if (evalCond(evalList(li->N))) {

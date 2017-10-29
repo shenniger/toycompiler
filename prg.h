@@ -7,12 +7,15 @@ void *moreMem(void *before, long beforesize, long addedsize);
 char *printToMem(const char *fmt, ...);
 
 /* reader */
-enum { tyEmpty, tyInt, tyFloat, tyString, tyIdent, tyList };
+enum { tyEmpty, tyInt, tyFloat, tyString, tyIdent, tyList, tyEnd };
 union Val {
   long I;
   double F;
   char *S;
   struct LE *L;
+
+  /* middle end */
+  struct MFun *Fun;
 };
 struct LE {
   union Val V;

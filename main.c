@@ -142,12 +142,13 @@ int main() {
   "(+ 1 (static x) (quasiunquote (+ 6 4))))))";*/
   char testfile[] =
       "(static-run (var stuff (scope (\n"
-      "  (var i 10000)\n"
+      "  (var i 10000000)\n"
       "  (var l (quote ()))\n"
       "  (while (!= i 0) (\n"
       "    (set l (append-first l (quasiquote ((print (quasiunquote i))))))\n"
       "    (set i (- i 1))))\n"
       "  l))))\n"
+      "(static-run (debug-print (ident-to-string (quote stuff))))\n"
       "(defun main () i32 ((static stuff) 0))\n";
   char testfile2[sizeof(testfile)];
   struct LE *list;
