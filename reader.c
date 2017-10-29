@@ -163,7 +163,7 @@ void readList(char *str, struct LE **l, const char *filebegin,
         (*l)->FileIdx = fileidx;
         (*l)->V.S = s;
         l = &((*l)->N);
-        for (; *s != ')' && *s != ' '; ++s) {
+        for (; *s != ')' && *s != ' ' && *s != '\t' && *s != '\n'; ++s) {
           if (!*s) {
             return;
           }
@@ -173,4 +173,18 @@ void readList(char *str, struct LE **l, const char *filebegin,
       }
     }
   }
+}
+
+struct LE *copyList(struct LE *l) {
+  struct LE *cp;
+  if (!l) {
+    return NULL;
+  }
+  cp = getMem(sizeof(struct LE));
+  *cp = *l;
+  if (cp->T == tyList) {
+    cp->V.L = copyList(cp->V.L);
+  }
+  cp->N = copyList(cp->N);
+  return cp;
 }

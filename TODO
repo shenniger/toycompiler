@@ -23,6 +23,7 @@ TODO List: EigenesScheme
 [X] Function Pointers
 [X] Stack Arrays
 [X] Struct Equals
+=> FINISHED. 13.10.2017
 
 --- Advanced language features ---
 [ ] Closures
@@ -33,6 +34,13 @@ TODO List: EigenesScheme
 [ ] Proper C Types and Chars
 
 --- Compile-time ---
+[ ] Basic language features at compile-time
+[ ] Functions
+[ ] Better type system (of which type is something? convert string to int etc.)
+[ ] Lambdas
+[ ] Function Macros
+[ ] Member Macros
+[ ] Type Macros
 [ ] Reader Extensions
 [ ] Attributes
 [ ] List what has to be done
@@ -40,7 +48,9 @@ TODO List: EigenesScheme
 --- Stuff ---
 [ ] Reading files
 [ ] Including files
+[ ] RAII
 [ ] OOP
 [ ] Save memory during compilation
 [ ] Initial LLVM Backend
+[ ] C Header Parsing
 [ ] Nicer name (say "CRISP"?)

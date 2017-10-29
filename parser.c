@@ -139,12 +139,22 @@ struct FStruct {
   struct FStruct *Last;
 };
 
+struct FGlobal {
+  unsigned long HashedName;
+  const char *Name;
+  struct BVar *Backend;
+  struct FType Type;
+  int Flags;
+  struct FGlobal *Last;
+};
+
 static struct FFunction *functions;
 static struct FFunction *currentffunction;
 static struct FScope *curscope;
 static struct FTypeAlias *typealiases;
 static struct FFnAlias *fnaliases;
 static struct FStruct *structs;
+static struct FGlobal *globals;
 
 static unsigned countLen(struct LE *l) {
   unsigned i;
@@ -154,7 +164,7 @@ static unsigned countLen(struct LE *l) {
   return i;
 }
 
-static unsigned long hashName(const char *s) {
+unsigned long hashName(const char *s) {
   unsigned long res;
   while (*s++) {
     res = *s * 11;
@@ -202,6 +212,9 @@ static const char *printType(struct FType t) {
       break;
     case ptRef:
       r = printToMem("ref %s", printType(*t.Data.Ptr.Pointee));
+      break;
+    default:
+      assert(0); /* hopefully never reached */
       break;
     }
   } break;
@@ -271,6 +284,14 @@ static int tryConvertType(struct FExpr e, struct FType want, struct FExpr *r) {
     }
     return 0;
   }
+  if (want.Type == ttPointer && want.Data.Ptr.Type == ptRef &&
+      typeEquals(*want.Data.Ptr.Pointee, e.Type)) {
+    if (r) {
+      r->Type = want;
+      r->Backend = refof(e.Backend);
+    }
+    return 0;
+  }
   want.Flags = e.Type.Flags & want.Type;
   if (want.Type == ttInt && e.Type.Type == ttInt) {
     /*
@@ -337,6 +358,8 @@ static struct FExpr parseExplicitCast(struct FExpr e, struct FType want,
 
 enum {
   bcNoBuiltin,
+  bcStatic,
+  bcStaticRun,
   bcDefun,
   bcFunProto,
   bcCast,
@@ -352,8 +375,8 @@ enum {
   bcAlias,
   bcPtrDeref,
   bcPtrRefof,
-  bcFunPtrRefof,
   bcFuncall,
+  bcGlobal,
   bcTODO_Print,
   bcTODO_Set,
   bcTODO_Var
@@ -363,7 +386,7 @@ struct BuiltinCommand {
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinCommand builtincommands[33];
+static struct BuiltinCommand builtincommands[36];
 
 enum {
   btNoBuiltin,
@@ -402,11 +425,14 @@ void initParser() {
 
   /* DO NOT ADD MORE COMMANDS THAN ARRAY ELEMENTS */
 
+  ADDCMD("static", bcStatic)
+  ADDCMD("static-run", bcStaticRun)
   ADDCMD("defun", bcDefun)
   ADDCMD("funproto", bcFunProto)
   ADDCMD("cast", bcCast)
   ADDCMD("memb", bcMemb)
   ADDCMD("struct", bcStruct)
+  ADDCMD("global", bcGlobal)
   ADDCMD("+", bcArm)
   ADDCMD("-", bcArm)
   ADDCMD("*", bcArm)
@@ -415,6 +441,7 @@ void initParser() {
   ADDCMD("||", bcArm)
   ADDCMD("<<", bcArm)
   ADDCMD(">>", bcArm)
+  ADDCMD("%", bcArm)
   ADDCMD("==", bcCmp)
   ADDCMD("!=", bcCmp)
   ADDCMD("<", bcCmp)
@@ -428,9 +455,8 @@ void initParser() {
   ADDCMD("break", bcBreak)
   ADDCMD("continue", bcContinue)
   ADDCMD("alias", bcAlias)
-  ADDCMD("ptr-refof", bcPtrRefof)
+  ADDCMD("ptrto", bcPtrRefof)
   ADDCMD("ptr-deref", bcPtrDeref)
-  ADDCMD("funptr-refof", bcFunPtrRefof)
   ADDCMD("funcall", bcFuncall)
   ADDCMD("print", bcTODO_Print)
   ADDCMD("set", bcTODO_Set)
@@ -1021,6 +1047,7 @@ struct FFunction *findSimpleFunction(const char *name, unsigned long hash,
                                      struct FScope *scope, struct LE *li) {
   struct FScope *sc;
   struct FFunction *fn;
+  (void)li;
   for (sc = scope; sc; sc = sc->Parent) {
     struct FLocalFun *fn;
     for (fn = sc->Funs; fn; fn = fn->Last) {
@@ -1034,8 +1061,7 @@ struct FFunction *findSimpleFunction(const char *name, unsigned long hash,
       return fn;
     }
   }
-  compileError(*li, "unknown function: \"%s\"", name);
-  return NULL; /* silences compiler warning */
+  return NULL;
 }
 
 struct FExpr parseFuncall(struct LE *li, unsigned long hash,
@@ -1162,6 +1188,7 @@ static struct FExpr parseMemb(struct LE *li, struct FExpr st) {
   }
   compileError(*li->N, "member not found (in %s): \"%s\"", printType(st.Type),
                li->N->V.S);
+  r.Type.Type = ttVoid;
   return r; /* never reached; used to silence compiler warning */
 }
 
@@ -1209,6 +1236,29 @@ static struct FExpr parseFunPtrCall(struct FExpr fun, struct LE *li) {
   return makeExpr(endFuncall(fnc), *fun.Type.Data.FunPtr.RetType);
 }
 
+static void parseGlobal(struct LE *l) {
+  /* TODO: error */
+  int flags;
+  struct FGlobal *gl;
+  flags = 0;
+  if (l->T == tyList) {
+    if (strcmp(l->V.L->V.S, "extern") == 0) {
+      flags |= gfExtern;
+    } else if (strcmp(l->V.L->V.S, "static") == 0) {
+      flags |= gfStatic;
+    }
+    l = l->N;
+  }
+  gl = getMem(sizeof(struct FGlobal));
+  gl->Last = globals;
+  gl->HashedName = hashName(l->N->V.S);
+  gl->Name = l->N->V.S;
+  gl->Type = parseType(l, 0);
+  gl->Flags = flags;
+  gl->Backend = addGlobal(gl->Name, gl->Type.Backend, gl->Flags);
+  globals = gl;
+}
+
 static struct FExpr parse(struct LE *l, int lvl) {
   if (!l) {
     return voidExpr();
@@ -1252,6 +1302,10 @@ static struct FExpr parse(struct LE *l, int lvl) {
     unsigned long hash;
     struct FVar *v;
     struct FScope *s;
+    struct FGlobal *gl;
+    struct FFunction *fn;
+    struct BType **parms;
+    struct FType t;
     hash = hashName(l->V.S);
     for (s = curscope; s; s = s->Parent) {
       for (v = s->Vars; v; v = v->Next) {
@@ -1267,7 +1321,28 @@ static struct FExpr parse(struct LE *l, int lvl) {
                                   currentffunction->Parms[i].Type));
       }
     }
-    compileError(*l, "unknown identifier: \"%s\"", l->V.S);
+    for (gl = globals; gl; gl = gl->Last) {
+      if (gl->HashedName == hash && strcmp(gl->Name, l->V.S) == 0) {
+        return handleRef(makeExpr(varUsage(gl->Backend), gl->Type));
+      }
+    }
+    fn = findSimpleFunction(l->V.S, hashName(l->V.S), curscope, l);
+    if (!fn) {
+      compileError(*l, "unknown identifier: \"%s\"", l->V.S);
+    }
+    parms = alloca(sizeof(struct BType *) * fn->NParms);
+    t.Type = ttFunPointer;
+    t.Flags = 0;
+    t.AliasUsed = NULL;
+    t.Data.FunPtr.Parms = getMem(sizeof(struct FType) * fn->NParms);
+    t.Data.FunPtr.NParms = fn->NParms;
+    t.Data.FunPtr.RetType = &fn->RetType;
+    for (i = 0; i < fn->NParms; ++i) {
+      t.Data.FunPtr.Parms[i] = fn->Parms[i].Type;
+      parms[i] = fn->Parms[i].Type.Backend;
+    }
+    t.Backend = fnPtrType(fn->RetType.Backend, fn->NParms, parms);
+    return makeExpr(fnRefof(fn->Backend), t);
   }
   case tyList: {
     if (!l->V.L) {
@@ -1283,6 +1358,11 @@ static struct FExpr parse(struct LE *l, int lvl) {
       switch (builtin) {
       case bcNoBuiltin:
         return parseFuncall(li, hash, curscope);
+      case bcStatic:
+        return parse(evalList(li->N), lvl);
+      case bcStaticRun:
+        evalList(li->N);
+        break;
       case bcDefun:
         parseDefun(li->N, curscope, lvl, 0);
         break;
@@ -1374,6 +1454,9 @@ static struct FExpr parse(struct LE *l, int lvl) {
       case bcStruct:
         parseStruct(li->N);
         break;
+      case bcGlobal:
+        parseGlobal(li->N);
+        break;
       case bcPtrRefof: {
         struct FExpr a;
         struct FType *t, ty;
@@ -1399,27 +1482,6 @@ static struct FExpr parse(struct LE *l, int lvl) {
         a.Backend = derefPtr(a.Backend);
         a.Type = *a.Type.Data.Ptr.Pointee;
         return a;
-      }
-      case bcFunPtrRefof: {
-        struct FFunction *fn;
-        struct BType **parms;
-        struct FType t;
-        unsigned i;
-        fn = findSimpleFunction(li->N->V.S, hashName(li->N->V.S), curscope,
-                                li->N);
-        parms = alloca(sizeof(struct BType *) * fn->NParms);
-        t.Type = ttFunPointer;
-        t.Flags = 0;
-        t.AliasUsed = NULL;
-        t.Data.FunPtr.Parms = getMem(sizeof(struct FType) * fn->NParms);
-        t.Data.FunPtr.NParms = fn->NParms;
-        t.Data.FunPtr.RetType = &fn->RetType;
-        for (i = 0; i < fn->NParms; ++i) {
-          t.Data.FunPtr.Parms[i] = fn->Parms[i].Type;
-          parms[i] = fn->Parms[i].Type.Backend;
-        }
-        t.Backend = fnPtrType(fn->RetType.Backend, fn->NParms, parms);
-        return makeExpr(fnRefof(fn->Backend), t);
       }
       case bcMemb:
         return parseMemb(li->N, parse(li->N, lvl));

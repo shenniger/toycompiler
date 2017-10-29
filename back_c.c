@@ -10,41 +10,52 @@ struct StringList {
   const char *S;
   struct StringList *L;
 };
-static void appendString(struct StringList **sl, const char *s) {
-  while (*sl) {
-    sl = &((*sl)->L);
+struct StringListContainer {
+  struct StringList *First;
+  struct StringList *Last;
+};
+static void appendString(struct StringListContainer *sl, const char *s) {
+  /* TODO: better solution with pointer to pointer */
+  if (sl->Last) {
+    sl->Last->L = getMem(sizeof(struct StringList));
+    sl->Last->L->S = s;
+    sl->Last = sl->Last->L;
+  } else {
+    sl->Last = getMem(sizeof(struct StringList));
+    sl->Last->S = s;
+    sl->First = sl->Last;
   }
-  *sl = getMem(sizeof(struct StringList));
-  (*sl)->S = s;
 }
-static void appendStringList(struct StringList **sl, struct StringList *l) {
-  if (*sl == l) {
+static void appendStringList(struct StringListContainer *sl,
+                             struct StringListContainer l) {
+  if (sl->First == l.First || !l.First) {
     return;
   }
-  while (*sl) {
-    sl = &((*sl)->L);
-  }
-  *sl = l;
-}
-static void printAll(struct StringList *sl) {
-  for (; sl; sl = sl->L) {
-    if (sl->S != NULLSTR) {
-      puts(sl->S);
-    }
+  if (sl->Last) {
+    sl->Last->L = l.First;
+    sl->Last = l.Last;
+  } else {
+    *sl = l;
   }
 }
-static char *toOneString(struct StringList *sl) {
+static void printAll(struct StringListContainer c) {
+  struct StringList *sl;
+  for (sl = c.First; sl; sl = sl->L) {
+    puts(sl->S);
+  }
+}
+static char *toOneString(struct StringListContainer c) {
   struct StringList *s;
   char *r;
   unsigned len, i, l;
   len = 0;
-  for (s = sl; s; s = s->L) {
+  for (s = c.First; s; s = s->L) {
     len += strlen(s->S);
   }
   r = getMem(len + 1);
   r[len] = 0;
   i = 0;
-  for (s = sl; s; s = s->L) {
+  for (s = c.First; s; s = s->L) {
     l = strlen(s->S);
     memcpy(r + i, s->S, l);
     i += l;
@@ -65,8 +76,8 @@ static int uniqueInt() { return ++uniqueIntAt; }
 enum BExprFlags { efNonSelfSufficient = 0x1 };
 struct BExpr {
   const char *A;
-  struct StringList *Before;
-  struct StringList *Var;
+  struct StringListContainer Before;
+  struct StringListContainer Var;
   int Flags;
 };
 static struct BExpr *makeSimpleExpr(const char *a, const char *before,
@@ -75,12 +86,14 @@ static struct BExpr *makeSimpleExpr(const char *a, const char *before,
   r = getMem(sizeof(struct BExpr));
   r->A = a;
   if (before != NULLSTR) {
-    r->Before = getMem(sizeof(struct StringList));
-    r->Before->S = before;
+    r->Before.Last = getMem(sizeof(struct StringList));
+    r->Before.Last->S = before;
+    r->Before.First = r->Before.Last;
   }
   if (var != NULLSTR) {
-    r->Var = getMem(sizeof(struct StringList));
-    r->Var->S = var;
+    r->Var.Last = getMem(sizeof(struct StringList));
+    r->Var.Last->S = var;
+    r->Var.First = r->Var.Last;
   }
   r->Flags = flags;
   return r;
@@ -270,8 +283,8 @@ struct BFunction {
   struct BParm *Parms;
   long NParms;
   struct BFunction *Parent;
-  struct StringList *Var;
-  struct StringList *Body;
+  struct StringListContainer Var;
+  struct StringListContainer Body;
   struct BType *RetType;
   int Flags;
 };
@@ -342,6 +355,15 @@ struct BVar *addParameter(const char *name, struct BType *type) {
   curfn->Parms[curfn->NParms].T = type;
   return &curfn->Parms[curfn->NParms++].V;
 }
+struct BVar *addGlobal(const char *name, struct BType *t, int flags) {
+  struct BVar *a;
+  a = getMem(sizeof(struct BVar));
+  a->Name = name;
+  printf("%s%s %s;\n",
+         flags & gfExtern ? "extern " : (flags & gfStatic ? "static " : ""),
+         t->A, name);
+  return a;
+}
 struct BExpr *varUsage(struct BVar *p) {
   return makeSimpleExpr(p->Name, NULLSTR, NULLSTR, efNonSelfSufficient);
 }
@@ -370,9 +392,9 @@ struct BExpr *tmpInstance(struct BTemporary *tmp) {
 
 struct BIncompleteFuncall {
   const char *Name;
-  struct StringList *Args;
-  struct StringList *Var;
-  struct StringList *Before;
+  struct StringListContainer Args;
+  struct StringListContainer Var;
+  struct StringListContainer Before;
   int LenArgs;
 };
 

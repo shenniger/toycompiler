@@ -102,7 +102,7 @@ int main() {
                       "  (set x 10)\n"
                       "  (print (fnA 10 x))\n"
                       "  4))";*/
-  char testfile[] =
+  /*char testfile[] =
       "(defun (static inline) add2 ((i8 a) (i32 b) (i32 c d)) i32 (+ a b))"
       "(alias add add2) (defun (static inline) add3 ((i32 a b c) "
       ") i32 (+ a b c))"
@@ -113,13 +113,14 @@ int main() {
       "(funproto sin ((float a)) float)"
       "(struct Point ((i64 x y)))"
       "(defun (static) test2 () void ())"
+      "(global (static) i32 glvar)"
       "(defun main () i32 ("
       "  (add 5 10)"
       "  (defun test () i32 5)"
       "  (add 10 11 (test))"
       "  (var (i64) x)"
       "  (var (i64) y 10) (add y y)"
-      "  (var (ref i64) t (ptr-refof x))"
+      "  (var (ref i64) t (ptrto x))"
       "  (add 1.2 3.4)\n"
       "  (+ 12 t)"
       "  (var (ptr const i8) s \"Hallo Welt.\")"
@@ -128,14 +129,26 @@ int main() {
       "  (var Point pt2) (set (memb pt2 y) 12)"
       "  (if (== pt pt2) (set x 0))"
       "  (add (cast i8 1) (cast i8 2) 3 4)"
-      "  (var (funptr i64 (i64 i64)) f (funptr-refof add2_64))"
+      "  (var (funptr i64 (i64 i64)) f add2_64)"
       "  (funcall f 4 10)"
       "  (test2)"
       ""
       "  (var (array 4 i32) a)"
       "  (set (ptr-deref (+ a 1)) 10)"
-      "  10"
-      "))";
+      "  (set glvar 1234)"
+      "  glvar"
+      "))";*/
+  /*"(static (var x 9.12)) (defun main () float (static (quasiquote "
+  "(+ 1 (static x) (quasiunquote (+ 6 4))))))";*/
+  char testfile[] =
+      "(static-run (var stuff (scope (\n"
+      "  (var i 10000)\n"
+      "  (var l (quote ()))\n"
+      "  (while (!= i 0) (\n"
+      "    (set l (append-first l (quasiquote ((print (quasiunquote i))))))\n"
+      "    (set i (- i 1))))\n"
+      "  l))))\n"
+      "(defun main () i32 ((static stuff) 0))\n";
   char testfile2[sizeof(testfile)];
   struct LE *list;
   memcpy(testfile2, testfile, sizeof(testfile));
@@ -145,6 +158,7 @@ int main() {
   /*printList(list, 0);*/
   initCodegen();
   initParser();
+  initEvaluator();
   parseSrc(list);
   finalizeCodegen();
   return 0;

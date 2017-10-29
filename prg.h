@@ -29,10 +29,16 @@ void compileError(struct LE l, const char *fmt, ...);
 void compileHint(struct LE l, const char *fmt, ...);
 
 void printList(struct LE *l, int depth);
+unsigned long hashName(const char *s);
+struct LE *copyList(struct LE *l);
 
 /* parser */
 void initParser();
 void parseSrc(struct LE *list);
+
+/* middle end (ctfe) */
+void initEvaluator();
+struct LE *evalList(struct LE *li);
 
 /* code generator */
 void initCodegen();
@@ -88,6 +94,8 @@ void endFnBody(struct BExpr *e);
 
 struct BVar *addVariable(const char *name, struct BType *t);
 struct BVar *addParameter(const char *name, struct BType *t);
+enum { gfStatic = 0x1, gfExtern = 0x2 };
+struct BVar *addGlobal(const char *name, struct BType *t, int flags);
 
 struct BExpr *varUsage(struct BVar *p);
 struct BExpr *setVar(struct BExpr *lhs,
