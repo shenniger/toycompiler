@@ -135,12 +135,18 @@ void readList(char *str, struct LE **l, const char *filebegin,
       ++s;
       l = &((*l)->N);
       break;
+    case ';':
+      for (; *s != '\n' && *s; ++s)
+        ;
+      break;
     default:
       if (*s >= '0' && *s <= '9') {
         int isFloat;
         char *a;
         isFloat = 0;
-        for (a = s; *a && *a != ' ' && *a != ')'; ++a) {
+        for (a = s; *a && *a != ' ' && *a != ')' && *a != '\n' && *a != '\t' &&
+                    *a != ';';
+             ++a) {
           if (*a == '.') {
             isFloat = 1;
           }
@@ -163,7 +169,8 @@ void readList(char *str, struct LE **l, const char *filebegin,
         (*l)->FileIdx = fileidx;
         (*l)->V.S = s;
         l = &((*l)->N);
-        for (; *s != ')' && *s != ' ' && *s != '\t' && *s != '\n'; ++s) {
+        for (; *s != ')' && *s != ' ' && *s != '\t' && *s != '\n' && *s != ';';
+             ++s) {
           if (!*s) {
             return;
           }

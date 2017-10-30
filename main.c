@@ -183,6 +183,7 @@ int main(int argc, char **argv) {
   sourcefile = readFile(sourcefilename, &len);
   srcfile = getMem(len + 1);
   memcpy(srcfile, sourcefile, len);
+  list = NULL;
   readList(srcfile, &list, srcfile, 0);
   initCodegen();
   initParser();

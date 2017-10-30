@@ -1,6 +1,5 @@
-(static-run (
-  (var add (lambda (a b) (+ a b)))
-  (debug-print (add 2 3))
-
-  (defun test a (debug-print (eval (car a))))
-  (test (add 8 9) 2847)))
+;(static-run (
+;  (var add (lambda (a b) (+ a b)))
+;  (debug-print (add 2 3))
+;  (defun test a (debug-print (eval (car a))))
+;  (test (add 8 9) 2847)))

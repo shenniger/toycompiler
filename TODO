@@ -47,7 +47,7 @@ TODO List: EigenesScheme
 
 --- Stuff ---
 [X] Reading files
-[ ] Comments
+[X] Comments
 [ ] Including files
 [ ] RAII
 [ ] OOP
