@@ -1525,6 +1525,7 @@ static struct FExpr parse(struct LE *l, int lvl) {
 
 void parseSrc(struct LE *list) {
   struct LE l;
+  memset(&l, 0, sizeof(struct LE));
   l.T = tyList;
   l.V.L = list;
   parse(&l, lvTop);

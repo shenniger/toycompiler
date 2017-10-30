@@ -54,6 +54,7 @@ enum {
   bmEval,
   bmAppend,
   bmAppendFirst,
+  bmReadFile,
   bmStringToInt,
   bmStringToFloat,
   bmNumToString,
@@ -71,7 +72,7 @@ struct BuiltinMacro {
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinMacro builtinmacros[53];
+static struct BuiltinMacro builtinmacros[54];
 
 void initEvaluator() {
   unsigned i;
@@ -105,6 +106,7 @@ void initEvaluator() {
   ADDM("lambda", bmLambda)
   ADDM("defun", bmDefun)
   ADDM("eval", bmEval)
+  ADDM("read-file", bmReadFile)
   ADDM("+", bmArm)
   ADDM("-", bmArm)
   ADDM("*", bmArm)
@@ -498,6 +500,10 @@ static struct LE *evalFuncall(struct LE *li) {
   case bmEval:
     checkArgs(li, 1);
     return evalList(evalList(li->N));
+  case bmReadFile:
+    checkArgs(li, 1);
+    /* TODO: error */
+    return readFileAsList(evalList(li->N)->V.S);
   case bmStringToInt: {
     struct LE *r; /* TODO: error */
     checkArgs(li, 1);

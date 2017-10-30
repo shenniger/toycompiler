@@ -31,6 +31,8 @@ const char *formatSourceLoc(struct LE l);
 void compileError(struct LE l, const char *fmt, ...);
 void compileHint(struct LE l, const char *fmt, ...);
 
+struct LE *readFileAsList(const char *name);
+
 void printList(struct LE *l, int depth);
 unsigned long hashName(const char *s);
 struct LE *copyList(struct LE *l);

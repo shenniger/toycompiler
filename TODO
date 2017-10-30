@@ -48,7 +48,8 @@ TODO List: EigenesScheme
 --- Stuff ---
 [X] Reading files
 [X] Comments
-[ ] Including files
+[X] Including files
+[ ] Proper file inclusion (module system? "inc" command?)
 [ ] RAII
 [ ] OOP
 [ ] Save memory during compilation
