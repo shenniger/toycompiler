@@ -11,7 +11,7 @@ enum { ttVoid, ttInt, ttFloat, ttStruct, ttPointer, ttFunPointer, ttArray };
 
 struct FIntType {
   unsigned char IntSize; /* bytes */
-  unsigned char Signed;
+  unsigned char Flags;
 };
 
 struct FStructType {
@@ -200,10 +200,34 @@ static const char *printType(struct FType t) {
   case ttVoid:
     r = "<void>";
     break;
-  case ttInt:
-    r = printToMem("%c%i", t.Data.Int.Signed ? 'i' : 'u',
-                   t.Data.Int.IntSize * 8);
-    break;
+  case ttInt: {
+    /* TODO: new int types */
+    if (t.Data.Int.Flags & ifChar) {
+      r = "char";
+      break;
+    }
+    if (t.Data.Int.Flags & ifCType) {
+      const char *const uns =
+          (t.Data.Int.Flags & ifSigned) ? "signed " : "unsigned ";
+      switch (t.Data.Int.IntSize) {
+      case 1:
+        r = printToMem("%schar", uns);
+        break;
+      case 2:
+        r = printToMem("%sshort int", uns);
+        break;
+      case 4:
+        r = printToMem("%sint", uns);
+        break;
+      case 8:
+        r = printToMem("%slong long int", uns);
+        break;
+      }
+    } else {
+      r = printToMem("%sint%i_t", (t.Data.Int.Flags & ifSigned) ? "" : "u",
+                     t.Data.Int.IntSize * 8);
+    }
+  } break;
   case ttFloat:
     r = t.Data.FloatSize == 8 ? "float" : "sfloat";
     break;
@@ -250,7 +274,7 @@ static int typeEquals(struct FType a, struct FType b) {
     return 1;
   case ttInt:
     return a.Data.Int.IntSize == b.Data.Int.IntSize &&
-           a.Data.Int.Signed == b.Data.Int.Signed;
+           a.Data.Int.Flags == b.Data.Int.Flags;
   case ttFloat:
     return a.Data.FloatSize == b.Data.FloatSize;
   case ttStruct:
@@ -301,8 +325,10 @@ static int tryConvertType(struct FExpr e, struct FType want, struct FExpr *r) {
      * Unsigned -> Signed   => Works if WantedSize >  HaveSize
      * Same     -> Same     => Works if WantedSize >= HaveSize
      */
-    if (((!e.Type.Data.Int.Signed == !want.Data.Int.Signed) ||
-         (!e.Type.Data.Int.Signed && want.Data.Int.Signed)) &&
+    if (((!(e.Type.Data.Int.Flags & ifSigned) ==
+          !(want.Data.Int.Flags & ifSigned)) ||
+         (!(e.Type.Data.Int.Flags & ifSigned) &&
+          (want.Data.Int.Flags & ifSigned))) &&
         want.Data.Int.IntSize > e.Type.Data.Int.IntSize) {
       if (r) {
         e.Type = want;
@@ -400,6 +426,7 @@ enum {
   btUint16,
   btUint32,
   btUint64,
+  btChar,
   btFloat,
   btShortFloat,
   btConst,
@@ -407,14 +434,15 @@ enum {
   btRef,
   btVoid,
   btFunPtr,
-  btArray
+  btArray,
+  btCType
 };
 struct BuiltinType {
   const char *Name;
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinType builtintypes[16];
+static struct BuiltinType builtintypes[18];
 
 void initParser() {
   unsigned i;
@@ -492,6 +520,7 @@ void initParser() {
   ADDTY("u16", btUint16)
   ADDTY("u32", btUint32)
   ADDTY("u64", btUint64)
+  ADDTY("char", btChar)
   ADDTY("float", btFloat)
   ADDTY("sfloat", btShortFloat)
   ADDTY("const", btConst)
@@ -500,6 +529,7 @@ void initParser() {
   ADDTY("void", btVoid)
   ADDTY("funptr", btFunPtr)
   ADDTY("array", btArray)
+  ADDTY("c-type", btCType)
 
 #undef ADDTY
 
@@ -549,42 +579,47 @@ static struct FType parseType(struct LE *li, int waslist) {
   case btInt8:
     r.Type = ttInt;
     r.Data.Int.IntSize = 1;
-    r.Data.Int.Signed = 1;
+    r.Data.Int.Flags = ifSigned;
     break;
   case btInt16:
     r.Type = ttInt;
     r.Data.Int.IntSize = 2;
-    r.Data.Int.Signed = 1;
+    r.Data.Int.Flags = ifSigned;
     break;
   case btInt32:
     r.Type = ttInt;
     r.Data.Int.IntSize = 4;
-    r.Data.Int.Signed = 1;
+    r.Data.Int.Flags = ifSigned;
     break;
   case btInt64:
     r.Type = ttInt;
     r.Data.Int.IntSize = 8;
-    r.Data.Int.Signed = 1;
+    r.Data.Int.Flags = ifSigned;
     break;
   case btUint8:
     r.Type = ttInt;
     r.Data.Int.IntSize = 1;
-    r.Data.Int.Signed = 0;
+    r.Data.Int.Flags = 0;
     break;
   case btUint16:
     r.Type = ttInt;
     r.Data.Int.IntSize = 2;
-    r.Data.Int.Signed = 0;
+    r.Data.Int.Flags = 0;
     break;
   case btUint32:
     r.Type = ttInt;
     r.Data.Int.IntSize = 4;
-    r.Data.Int.Signed = 0;
+    r.Data.Int.Flags = 0;
     break;
   case btUint64:
     r.Type = ttInt;
     r.Data.Int.IntSize = 8;
-    r.Data.Int.Signed = 0;
+    r.Data.Int.Flags = 0;
+    break;
+  case btChar:
+    r.Type = ttInt;
+    r.Data.Int.IntSize = 1;
+    r.Data.Int.Flags = ifChar;
     break;
   case btFloat:
     r.Type = ttFloat;
@@ -658,6 +693,46 @@ static struct FType parseType(struct LE *li, int waslist) {
     r.Data.Array.Size = li->N->V.I;
     r.Backend = arrayType(r.Data.Ptr.Pointee->Backend, r.Data.Array.Size);
     break;
+  case btCType: {
+    struct LE *l;
+    int size, flags, issigned;
+    if (!waslist) {
+      compileError(*li, "\"c-type\" requires arguments");
+    }
+    size = 4;
+    flags = ifCType;
+    issigned = 1;
+    for (l = li->N; l; l = l->N) {
+      if (l->T != tyIdent) {
+        compileError(*li, "\"c-type\" requires only identifiers");
+      }
+      if (strcmp(l->V.S, "signed") == 0) {
+        issigned = 1;
+      } else if (strcmp(l->V.S, "unsigned") == 0) {
+        issigned = 0;
+      } else if (strcmp(l->V.S, "char") == 0) {
+        size = 1;
+      } else if (strcmp(l->V.S, "long") == 0) {
+        size *= 2;
+      } else if (strcmp(l->V.S, "short") == 0) {
+        size /= 2;
+      } else if (strcmp(l->V.S, "int") != 0) {
+        compileError(*l, "unknown c-type identifier");
+      }
+    }
+    if (issigned) {
+      flags |= ifSigned;
+    }
+    if (size == 16) /* long long */ {
+      size = 8;
+    }
+    if (size == 0 || size > 8) {
+      compileError(*li, "invalid c-type");
+    }
+    r.Type = ttInt;
+    r.Data.Int.IntSize = size;
+    r.Data.Int.Flags = flags;
+  } break;
   case btVoid:
     return voidExpr().Type;
   case btNoBuiltin: /* (fallthrough intended) */
@@ -684,7 +759,7 @@ static struct FType parseType(struct LE *li, int waslist) {
   }
   switch (r.Type) {
   case ttInt:
-    r.Backend = intType(r.Data.Int.Signed, r.Data.Int.IntSize);
+    r.Backend = intType(r.Data.Int.Flags, r.Data.Int.IntSize);
     break;
   case ttFloat:
     r.Backend = floatType(r.Data.FloatSize);
@@ -752,6 +827,7 @@ static void parseDefun(struct LE *li, struct FScope *scope, int lvl,
       ret = convertType(ret, fn->RetType, li->N->N->N);
       endFnBody(ret.Backend);
     } else {
+      addEvaluation(ret.Backend);
       endFnBody(NULL);
     }
   }
@@ -796,11 +872,14 @@ static struct FType resultTypeOfArmExpr(struct FType a, struct FType b,
   r.AliasUsed = NULL;
   switch (r.Type) {
   case ttInt:
-    r.Data.Int.Signed = a.Data.Int.Signed || b.Data.Int.Signed;
+    r.Data.Int.Flags =
+        (a.Data.Int.Flags & ifSigned) || (b.Data.Int.Flags & ifSigned)
+            ? ifSigned
+            : 0;
     r.Data.Int.IntSize = a.Data.Int.IntSize > b.Data.Int.IntSize
                              ? a.Data.Int.IntSize
                              : b.Data.Int.IntSize;
-    r.Backend = intType(r.Data.Int.Signed, r.Data.Int.IntSize);
+    r.Backend = intType(r.Data.Int.Flags, r.Data.Int.IntSize);
     break;
   case ttFloat:
     r.Data.FloatSize = 8;
@@ -826,7 +905,7 @@ static struct FExpr parseArm(struct LE *li, const char *op) {
   e.Type = resultTypeOfArmExpr(left.Type, right.Type, li);
   if (e.Type.Type == ttInt) {
     e.Backend =
-        arithmeticOp(op, left.Backend, right.Backend, e.Type.Data.Int.Signed,
+        arithmeticOp(op, left.Backend, right.Backend, e.Type.Data.Int.Flags,
                      e.Type.Data.Int.IntSize, 0); /* TODO: error */
   } else if (e.Type.Type == ttPointer) {
     e.Backend = arithmeticOp(op, left.Backend, right.Backend, 0, 0,
@@ -844,7 +923,7 @@ static struct FExpr parseArm(struct LE *li, const char *op) {
     e.Type = resultTypeOfArmExpr(e.Type, right.Type, l);
     if (e.Type.Type == ttInt) {
       e.Backend =
-          arithmeticOp(op, e.Backend, right.Backend, e.Type.Data.Int.Signed,
+          arithmeticOp(op, e.Backend, right.Backend, e.Type.Data.Int.Flags,
                        e.Type.Data.Int.IntSize, 0);
     } else if (e.Type.Type == ttPointer) {
       e.Backend = arithmeticOp(op, e.Backend, right.Backend, 0, 0, 1);
@@ -864,7 +943,7 @@ static struct FExpr parseCmp(const char *op, struct FExpr a, struct FExpr b,
   r.Type.Flags = 0;
   r.Type.Backend = intType(1, 1);
   r.Type.Data.Int.IntSize = 1;
-  r.Type.Data.Int.Signed = 1;
+  r.Type.Data.Int.Flags = ifSigned;
   if ((a.Type.Type == ttInt || a.Type.Type == ttFloat ||
        a.Type.Type == ttPointer) &&
       (b.Type.Type == ttInt || b.Type.Type == ttFloat ||
@@ -1272,8 +1351,8 @@ static struct FExpr parse(struct LE *l, int lvl) {
     t.AliasUsed = NULL;
     t.Flags = 0;
     t.Data.Int.IntSize = 4;
-    t.Data.Int.Signed = 1;
-    t.Backend = intType(1, 4);
+    t.Data.Int.Flags = ifSigned;
+    t.Backend = intType(ifSigned, 4);
     return makeExpr(intLiteral(l->V.I), t);
   }
   case tyFloat: {
@@ -1295,8 +1374,8 @@ static struct FExpr parse(struct LE *l, int lvl) {
     t.Data.Ptr.Pointee->Type = ttInt;
     t.Data.Ptr.Pointee->AliasUsed = NULL;
     t.Data.Ptr.Pointee->Flags = tfConst;
-    t.Data.Ptr.Pointee->Data.Int.IntSize = 1; /* TODO */
-    t.Data.Ptr.Pointee->Data.Int.Signed = 1;
+    t.Data.Ptr.Pointee->Data.Int.IntSize = 1;
+    t.Data.Ptr.Pointee->Data.Int.Flags = ifChar;
     return makeExpr(stringLiteral(l->V.S), t);
   }
   case tyIdent: {
@@ -1429,7 +1508,7 @@ static struct FExpr parse(struct LE *l, int lvl) {
         struct FExpr a;
         a = parse(li->N, lvl);
         /* TODO: check type */
-        return makeExpr(unaryOp(*li->V.S, a.Backend, a.Type.Data.Int.Signed,
+        return makeExpr(unaryOp(*li->V.S, a.Backend, a.Type.Data.Int.Flags,
                                 a.Type.Data.Int.IntSize),
                         a.Type);
       }

@@ -15,7 +15,6 @@ struct StringListContainer {
   struct StringList *Last;
 };
 static void appendString(struct StringListContainer *sl, const char *s) {
-  /* TODO: better solution with pointer to pointer */
   if (sl->Last) {
     sl->Last->L = getMem(sizeof(struct StringList));
     sl->Last->L->S = s;
@@ -160,8 +159,25 @@ struct BExpr *stringLiteral(const char *val) {
 struct BType *voidType() {
   return makeSimpleType("void");
 }
-struct BType *intType(int issigned, int size) { /* size in bytes */
-  return makeSimpleType(printToMem("%sint%i_t", issigned ? "" : "u", size * 8));
+struct BType *intType(int flags, int size) { /* size in bytes */
+  if (flags & ifChar) {
+    return makeSimpleType("char"); /* TODO: other character lengths */
+  }
+  if (flags & ifCType) {
+    const char *const uns = (flags & ifSigned) ? "signed " : "unsigned ";
+    switch (size) {
+    case 1:
+      return makeSimpleType(printToMem("%schar", uns));
+    case 2:
+      return makeSimpleType(printToMem("%sshort int", uns));
+    case 4:
+      return makeSimpleType(printToMem("%sint", uns));
+    case 8:
+      return makeSimpleType(printToMem("%slong long int", uns));
+    }
+  }
+  return makeSimpleType(
+      printToMem("%sint%i_t", (flags & ifSigned) ? "" : "u", size * 8));
 }
 struct BType *floatType(int size) { /* size in bytes */
   return makeSimpleType(size == 8 ? "double" : "float");
@@ -219,7 +235,7 @@ struct BExpr *castPtr(struct BExpr *a, struct BType *t) {
 }
 
 struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b,
-                           int result_signed, int result_size, int ptr) {
+                           int result_flags, int result_size, int ptr) {
   struct BExpr *r;
   r = getMem(sizeof(struct BExpr));
   if (!ptr && (*op == '+' || *op == '-' || *op == '*')) {
@@ -229,9 +245,8 @@ struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b,
     appendStringList(&r->Var, a->Var);
     r->Before = b->Before;
     appendStringList(&r->Before, a->Before);
-    appendString(&r->Var,
-                 printToMem("  %sint%i_t temporary__%i;",
-                            result_signed ? "" : "u", result_size * 8, u));
+    appendString(&r->Var, printToMem(" %s temporary__%i;",
+                                     intType(result_flags, result_size)->A, u));
     appendString(&r->Before,
                  printToMem("  if(__builtin_%s_overflow(%s, %s, "
                             "&temporary__%i)) { /* TODO */ }",
@@ -248,10 +263,10 @@ struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b,
   }
   return r;
 }
-struct BExpr *unaryOp(char op, struct BExpr *a, int result_signed,
+struct BExpr *unaryOp(char op, struct BExpr *a, int result_flags,
                       int result_size) {
   struct BExpr *r;
-  (void)result_signed, (void)result_size;
+  (void)result_flags, (void)result_size;
   r = getMem(sizeof(struct BExpr));
   appendStringList(&r->Var, a->Var);
   appendStringList(&r->Before, a->Before);

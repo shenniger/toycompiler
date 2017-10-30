@@ -1,4 +1,10 @@
 ; A sample file
-(defun main () i32 0)
-(static (read-file "/tmp/a.crp"))
-; A B C D E
+
+; printf with a number
+(funproto printf (((ptr const char) fmt) (i32 a)) (c-type int))
+
+(defun main () (c-type int) (
+  (printf "test: %i\n" 16)
+  (printf "another test: %i\n" 98)
+  (cast (c-type int) 0)))
+

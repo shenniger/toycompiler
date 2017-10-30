@@ -58,8 +58,9 @@ void endStruct(struct BStruct *st);
 struct BExpr *structMemb(struct BExpr *st, struct BStructMember *memb);
 
 struct BType *voidType();
-struct BType *intType(int issigned, int size); /* size in bytes */
-struct BType *floatType(int size);             /* size in bytes */
+enum { ifSigned = 0x1, ifCType = 0x2, ifChar = 0x4 };
+struct BType *intType(int flags, int size); /* size in bytes */
+struct BType *floatType(int size);          /* size in bytes */
 struct BType *structType(struct BStruct *st);
 struct BType *ptrType(struct BType *t);
 struct BType *fnPtrType(struct BType *rettype, int nparms,
@@ -83,9 +84,9 @@ struct BExpr *castNum(struct BExpr *a, struct BType *t);
 struct BExpr *castPtr(struct BExpr *a, struct BType *t);
 
 struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b,
-                           int result_signed, int result_size, int ptr);
+                           int result_flags, int result_size, int ptr);
 struct BExpr *unaryOp(char op, struct BExpr *a, int result_signed,
-                      int result_size);
+                      int result_flags);
 struct BExpr *arithmeticFPOp(const char *op, struct BExpr *a, struct BExpr *b,
                              int floatsize);
 

@@ -27,11 +27,10 @@ TODO List: EigenesScheme
 
 --- Advanced language features ---
 [ ] Closures
-[ ] Vectors
 [ ] Operator Overloading
 [ ] Custom conversions
 [ ] Auto-Arg Closures
-[ ] Proper C Types and Chars
+[X] Proper C Types and Chars
 
 --- Compile-time ---
 [X] Basic language features at compile-time
@@ -42,8 +41,6 @@ TODO List: EigenesScheme
 [ ] Member Macros
 [ ] Type Macros
 [ ] Reader Extensions
-[ ] Attributes
-[ ] List what has to be done
 
 --- Stuff ---
 [X] Reading files
@@ -51,6 +48,7 @@ TODO List: EigenesScheme
 [X] Including files
 [ ] Proper file inclusion (module system? "inc" command?)
 [ ] RAII
+[ ] Vectors
 [ ] OOP
 [ ] Save memory during compilation
 [ ] Initial LLVM Backend
