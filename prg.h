@@ -15,7 +15,7 @@ union Val {
   struct LE *L;
 
   /* middle end */
-  struct MFun *Fun;
+  void *D;
 };
 struct LE {
   union Val V;

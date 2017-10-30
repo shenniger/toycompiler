@@ -45,7 +45,28 @@ void printList(struct LE *list, int depth) {
   }
 }
 
+static char *readFile(const char *name, size_t *len) {
+  FILE *in;
+  char *s;
+  in = fopen(name, "rb");
+  if (!in) {
+    return NULL;
+  }
+  fseek(in, 0, SEEK_END);
+  *len = ftell(in);
+  fseek(in, 0, SEEK_SET);
+  s = getMem(*len + 1);
+  if (fread(s, 1, *len, in) != *len) {
+    fclose(in);
+    return NULL;
+  }
+  fclose(in);
+  s[*len] = 0;
+  return s;
+}
+
 static const char *sourcefile; /* TODO: array */
+static const char *sourcefilename;
 
 const char *formatSourceLoc(struct LE l) {
   unsigned line;
@@ -61,7 +82,7 @@ const char *formatSourceLoc(struct LE l) {
       lastline = s;
     }
   }
-  return printToMem("<>:%i:%i", line, stop - lastline);
+  return printToMem("%s:%i:%i", sourcefilename, line, stop - lastline);
 }
 
 void compileError(struct LE l, const char *fmt, ...) {
@@ -83,7 +104,7 @@ void compileHint(struct LE l, const char *fmt, ...) {
   puts("");
 }
 
-int main() {
+int main(int argc, char **argv) {
   /*char testfile[] =
       "(defun fnA (x y z) (+ x y z 4 (if 0 1 (+ 2 2))))\n"
       "(defun main () ((print (+ (* 12 4) (- 5 5))) "
@@ -140,23 +161,29 @@ int main() {
       "))";*/
   /*"(static (var x 9.12)) (defun main () float (static (quasiquote "
   "(+ 1 (static x) (quasiunquote (+ 6 4))))))";*/
-  char testfile[] =
+  /*char testfile[] =
       "(static-run (var stuff (scope (\n"
-      "  (var i 10000000)\n"
+      "  (var i 1000000)\n"
       "  (var l (quote ()))\n"
       "  (while (!= i 0) (\n"
       "    (set l (append-first l (quasiquote ((print (quasiunquote i))))))\n"
       "    (set i (- i 1))))\n"
       "  l))))\n"
       "(static-run (debug-print (ident-to-string (quote stuff))))\n"
-      "(defun main () i32 ((static stuff) 0))\n";
-  char testfile2[sizeof(testfile)];
+      "(defun main () i32 ((static stuff) 0))\n";*/
+  char *srcfile;
   struct LE *list;
-  memcpy(testfile2, testfile, sizeof(testfile));
-  sourcefile = testfile2;
+  size_t len;
+  if (argc != 2) {
+    fputs("USAGE: [exec] [FILE]\n", stderr);
+    return 1;
+  }
   initAlloc();
-  readList(testfile, &list, testfile, 0);
-  /*printList(list, 0);*/
+  sourcefilename = argv[1];
+  sourcefile = readFile(sourcefilename, &len);
+  srcfile = getMem(len + 1);
+  memcpy(srcfile, sourcefile, len);
+  readList(srcfile, &list, srcfile, 0);
   initCodegen();
   initParser();
   initEvaluator();

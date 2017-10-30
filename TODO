@@ -35,9 +35,9 @@ TODO List: EigenesScheme
 
 --- Compile-time ---
 [X] Basic language features at compile-time
-[ ] Functions
+[X] Functions
 [X] Better type system (of which type is something? convert string to int etc.)
-[ ] Lambdas
+[X] Lambdas
 [ ] Function Macros
 [ ] Member Macros
 [ ] Type Macros
@@ -46,7 +46,8 @@ TODO List: EigenesScheme
 [ ] List what has to be done
 
 --- Stuff ---
-[ ] Reading files
+[X] Reading files
+[ ] Comments
 [ ] Including files
 [ ] RAII
 [ ] OOP

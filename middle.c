@@ -7,7 +7,10 @@
 
 enum { tyMiddleEndType = tyEnd, tyFun };
 
-struct MFun {};
+struct MFun {
+  struct LE *Args;
+  struct LE *L;
+};
 
 struct MVar {
   unsigned long HashedName;
@@ -46,6 +49,9 @@ enum {
   bmLet,
   bmSet,
   bmScope,
+  bmLambda,
+  bmDefun,
+  bmEval,
   bmAppend,
   bmAppendFirst,
   bmStringToInt,
@@ -65,7 +71,7 @@ struct BuiltinMacro {
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinMacro builtinmacros[50];
+static struct BuiltinMacro builtinmacros[53];
 
 void initEvaluator() {
   unsigned i;
@@ -96,6 +102,9 @@ void initEvaluator() {
   ADDM("append", bmAppend)
   ADDM("append-first", bmAppendFirst)
   ADDM("debug-print", bmDebugPrint)
+  ADDM("lambda", bmLambda)
+  ADDM("defun", bmDefun)
+  ADDM("eval", bmEval)
   ADDM("+", bmArm)
   ADDM("-", bmArm)
   ADDM("*", bmArm)
@@ -140,7 +149,7 @@ void initEvaluator() {
   }
 }
 
-void checkArgs(struct LE *l, int n) {
+static void checkArgs(struct LE *l, int n) {
   int i;
   struct LE *li;
   li = l->N;
@@ -157,7 +166,7 @@ void checkArgs(struct LE *l, int n) {
   }
 }
 
-void handleQuasiquote(struct LE **li) {
+static void handleQuasiquote(struct LE **li) {
   struct LE **l;
   if ((*li)->T != tyList || !(*li)->V.L) {
     return;
@@ -179,7 +188,7 @@ void handleQuasiquote(struct LE **li) {
   }
 }
 
-struct LE *listCmd(struct LE *li) {
+static struct LE *listCmd(struct LE *li) {
   struct LE *r;
   if (!li) {
     return NULL;
@@ -189,7 +198,7 @@ struct LE *listCmd(struct LE *li) {
   return r;
 }
 
-struct LE evalOp(const char *op, struct LE a, struct LE b) {
+static struct LE evalOp(const char *op, struct LE a, struct LE b) {
   struct LE l;
   memset(&l, 0, sizeof(l));
   if (a.T == tyInt && b.T == tyFloat) {
@@ -264,7 +273,7 @@ struct LE evalOp(const char *op, struct LE a, struct LE b) {
   return l; /* never reached */
 }
 
-struct LE *evalCmp(struct LE *li) {
+static struct LE *evalCmp(struct LE *li) {
   struct LE *l, *a, *b;
   checkArgs(li, 2);
   a = evalList(li->N);
@@ -274,7 +283,7 @@ struct LE *evalCmp(struct LE *li) {
   return l;
 }
 
-struct LE *evalArm(struct LE *li) {
+static struct LE *evalArm(struct LE *li) {
   struct LE *l, *a, *b, *list;
   if (!li->N || !li->N->N) {
     compileError(*li, "ctfe: %s: too few arguments");
@@ -290,7 +299,7 @@ struct LE *evalArm(struct LE *li) {
   return l;
 }
 
-int evalCond(struct LE *li) {
+static int evalCond(struct LE *li) {
   switch (li->T) {
   case tyEmpty:
     return 0;
@@ -306,7 +315,57 @@ int evalCond(struct LE *li) {
   return 1;
 }
 
-struct LE *evalFuncall(struct LE *li) {
+static struct MFun *evalLambda(struct LE *li) {
+  struct MFun *f;
+  f = getMem(sizeof(struct MFun));
+  f->Args = li;
+  f->L = li->N;
+  /* TODO: fail */
+  /* TODO: perhaps include variable values? */
+  return f;
+}
+
+static struct LE *callFun(struct MFun *f, struct LE *args) {
+  struct MScope scope;
+  struct LE *r;
+  scope.Parent = curmscope;
+  curmscope = &scope;
+  if (f->Args->T == tyList) {
+    struct LE *l, *la;
+    struct MVar *v;
+    scope.Vars = NULL;
+    for (l = f->Args->V.L, la = args; 1; l = l->N, la = la->N) {
+      if (!l != !la) {
+        compileError(
+            *la,
+            "ctfe: too many or too few arguments in function call"); /* TODO: be
+                                                                  more
+                                                                  specific */
+        break;
+      }
+      if (!l && !la) {
+        break;
+      }
+      v = getMem(sizeof(struct MVar));
+      v->Last = scope.Vars;
+      scope.Vars = v;
+      v->HashedName = hashName(l->V.S);
+      v->Name = l->V.S;
+      v->Value = *evalList(la);
+    }
+  } else {
+    scope.Vars = getMem(sizeof(struct MVar));
+    scope.Vars->HashedName = hashName(f->Args->V.S);
+    scope.Vars->Name = f->Args->V.S;
+    scope.Vars->Value.T = tyList;
+    scope.Vars->Value.V.L = args;
+  }
+  r = evalList(f->L);
+  curmscope = scope.Parent;
+  return r;
+}
+
+static struct LE *evalFuncall(struct LE *li) {
   unsigned long hash;
   int builtin;
   unsigned i;
@@ -323,9 +382,6 @@ struct LE *evalFuncall(struct LE *li) {
   case bmCar: {
     struct LE *l;
     checkArgs(li, 1);
-    if (li->N->T != tyList) {
-      compileError(*li->N, "ctfe: %s not a list", li->V.S);
-    }
     l = evalList(li->N);
     if (l->T != tyList) {
       compileError(*li, "ctfe: %s: not a list", li->V.S);
@@ -362,7 +418,7 @@ struct LE *evalFuncall(struct LE *li) {
   }
   case bmQuote:
     checkArgs(li, 1);
-    return li->N;
+    return copyList(li->N);
   case bmQuasiquote:
     checkArgs(li, 1);
     handleQuasiquote(&li->N);
@@ -419,6 +475,29 @@ struct LE *evalFuncall(struct LE *li) {
     r->V.I = ceil(evalList(li->N)->V.F);
     return r;
   }
+  case bmLambda: {
+    struct LE *r;
+    checkArgs(li, 2);
+    r = getMem(sizeof(struct LE));
+    r->T = tyFun;
+    r->V.D = evalLambda(li->N);
+    return r;
+  }
+  case bmDefun: {
+    struct MVar *a;
+    checkArgs(li, 3);
+    a = getMem(sizeof(struct MVar));
+    a->HashedName = hashName(li->N->V.S); /* TODO: error */
+    a->Name = li->N->V.S;
+    a->Last = firstscope.Vars;
+    firstscope.Vars = a;
+    a->Value.T = tyFun;
+    a->Value.V.D = evalLambda(li->N->N);
+    return NULL;
+  }
+  case bmEval:
+    checkArgs(li, 1);
+    return evalList(evalList(li->N));
   case bmStringToInt: {
     struct LE *r; /* TODO: error */
     checkArgs(li, 1);
@@ -446,7 +525,7 @@ struct LE *evalFuncall(struct LE *li) {
     } else if (li->N->T == tyFloat) {
       r->V.S = printToMem("%f", l->V.F);
     } else {
-      compileError(*li->N, "%s: wrong type", li->V.S);
+      compileError(*li->N, "ctfe: %s: wrong type", li->V.S);
     }
     return r;
   }
@@ -497,7 +576,7 @@ struct LE *evalFuncall(struct LE *li) {
     r->T = tyIdent;
     l = evalList(li->N);
     if (l->T != tyString) {
-      compileError(*li->N, "%s: wrong type (expected string)", li->V.S);
+      compileError(*li->N, "ctfe: %s: wrong type (expected string)", li->V.S);
     }
     /* TODO: check whether it contains special characters (like ' ' or ')' */
     r->V.S = l->V.S;
@@ -510,7 +589,7 @@ struct LE *evalFuncall(struct LE *li) {
     r->T = tyString;
     l = evalList(li->N);
     if (l->T != tyIdent) {
-      compileError(*li->N, "%s: wrong type (expected ident)", li->V.S);
+      compileError(*li->N, "ctfe: %s: wrong type (expected ident)", li->V.S);
     }
     r->V.S = l->V.S;
     return r;
@@ -605,7 +684,19 @@ struct LE *evalFuncall(struct LE *li) {
     /* TODO: proper printList */
     return NULL;
   case bmNoBuiltin: {
-    /* TODO */
+    struct MVar *v;
+    struct MScope *sc;
+    unsigned long hash;
+    hash = hashName(li->V.S);
+    for (sc = curmscope; sc; sc = sc->Parent) {
+      for (v = sc->Vars; v; v = v->Last) {
+        if (v->Value.T == tyFun && v->HashedName == hash &&
+            strcmp(li->V.S, v->Name) == 0) {
+          return callFun((struct MFun *)v->Value.V.D, li->N);
+        }
+      }
+    }
+    compileError(*li, "ctfe: function not found (compile-time): %s", li->V.S);
   }
   }
   assert(0);   /* never reached */
@@ -635,7 +726,7 @@ struct LE *evalList(struct LE *li) {
         }
       }
     }
-    compileError(*li, "unknown variable: %s", li->V.S);
+    compileError(*li, "ctfe: unknown variable: %s", li->V.S);
   }
   case tyList: {
     struct LE *l;
