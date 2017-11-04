@@ -2,3 +2,5 @@
 *.swp
 test
 callgrind.*
+*.o
+*.dwo

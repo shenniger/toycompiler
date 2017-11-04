@@ -37,8 +37,9 @@ TODO List: EigenesScheme
 [X] Functions
 [X] Better type system (of which type is something? convert string to int etc.)
 [X] Lambdas
-[ ] Function Macros
-[ ] Member Macros
+[X] Function Macros
+[ ] Introspection
+[X] Member Macros
 [ ] Type Macros
 [ ] Reader Extensions
 

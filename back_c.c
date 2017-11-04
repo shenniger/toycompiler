@@ -64,7 +64,7 @@ static char *toOneString(struct StringListContainer c) {
 
 void initCodegen() {
   puts("/* A generated C file. */");
-  puts("#include <stdio.h>");
+  /*puts("#include <stdio.h>");*/
   puts("#include <stdint.h>");
 }
 void finalizeCodegen() { puts("/* EOF */"); }
@@ -500,13 +500,6 @@ void endWhileLoop() { appendString(&curfn->Body, "}"); }
 
 void breakLoop() { appendString(&curfn->Body, "  break;"); }
 void continueLoop() { appendString(&curfn->Body, "  continue;"); }
-
-void TODO_print(struct BExpr *a) {
-  appendStringList(&curfn->Var, a->Var);
-  appendStringList(&curfn->Body, a->Before);
-  appendString(&curfn->Body,
-               printToMem("  printf(\"VAL: %%i\\n\", %s);", a->A));
-}
 
 void addEvaluation(struct BExpr *a) {
   if (!a) {

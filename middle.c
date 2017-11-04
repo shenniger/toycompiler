@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { tyMiddleEndType = tyEnd, tyFun };
+enum { tyMiddleEndType = tyEnd, tyFun, tyStruct };
 
 struct MFun {
   struct LE *Args;
@@ -24,8 +24,20 @@ struct MScope {
   struct MScope *Parent;
 };
 
+struct MFunMacro {
+  unsigned long HashedName;
+  const char *Name;
+  struct MFun Fun;
+  struct MFunMacro *Last;
+};
+
+struct MMemberMacro {
+  struct MFun Fun;
+};
+
 static struct MScope firstscope;
 static struct MScope *curmscope;
+static struct MFunMacro *funmacros;
 
 enum {
   bmNoBuiltin,
@@ -52,6 +64,7 @@ enum {
   bmLambda,
   bmDefun,
   bmEval,
+  bmMacro,
   bmAppend,
   bmAppendFirst,
   bmReadFile,
@@ -65,14 +78,17 @@ enum {
   bmIsFloat,
   bmToIdent,
   bmToString,
-  bmDebugPrint
+  bmDebugPrint,
+  bmFindStruct,
+  bmGetStructName,
+  bmAddMemberMacro
 };
 struct BuiltinMacro {
   const char *Name;
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinMacro builtinmacros[54];
+static struct BuiltinMacro builtinmacros[58];
 
 void initEvaluator() {
   unsigned i;
@@ -107,6 +123,7 @@ void initEvaluator() {
   ADDM("defun", bmDefun)
   ADDM("eval", bmEval)
   ADDM("read-file", bmReadFile)
+  ADDM("macro", bmMacro)
   ADDM("+", bmArm)
   ADDM("-", bmArm)
   ADDM("*", bmArm)
@@ -141,6 +158,9 @@ void initEvaluator() {
   ADDM("is-float", bmIsFloat)
   ADDM("string-to-ident", bmToIdent)
   ADDM("ident-to-string", bmToString)
+  ADDM("find-struct", bmFindStruct)
+  ADDM("get-struct-name", bmGetStructName)
+  ADDM("add-member-macro", bmAddMemberMacro)
 
 #undef ADDM
 
@@ -624,7 +644,41 @@ static struct LE *evalFuncall(struct LE *li) {
     return &v->Value;
   }
   case bmLet: {
-    /* TODO */
+    struct MScope sc;
+    struct LE *l, *ret, *newret;
+    struct MVar *v;
+    sc.Parent = curmscope;
+    sc.Vars = NULL;
+
+    checkArgs(li, 2);
+    if (li->N->T != tyList) {
+      compileError(*li, "ctfe: \"%s\": expected list", li->V.S);
+    }
+    for (l = li->N->V.L; l; l = l->N) {
+      if (!l->V.L) {
+        compileError(*l, "ctfe: \"%s\": expected list in list", li->V.S);
+      }
+      /* TODO: error */
+      v = getMem(sizeof(struct MVar));
+      if (l->V.L->T != tyIdent) {
+        compileError(*l->V.L, "ctfe: \"%s\": expected ident", li->V.S);
+      }
+      v->HashedName = hashName(l->V.L->V.S);
+      v->Name = l->V.L->V.S;
+      v->Last = sc.Vars;
+      sc.Vars = v;
+
+      v->Value = *evalList(l->V.L->N);
+    }
+
+    curmscope = &sc;
+
+    ret = evalList(li->N->N);
+    newret = getMem(sizeof(struct LE));
+    *newret = *ret;
+
+    curmscope = sc.Parent;
+    return newret;
   }
   case bmSet: {
     struct LE *l;
@@ -683,12 +737,83 @@ static struct LE *evalFuncall(struct LE *li) {
     lt->V.L = lt2;
     return lt;
   }
+  case bmMacro: {
+    struct MFunMacro *fm;
+    struct LE *l;
+    checkArgs(li, 2);
+    fm = getMem(sizeof(struct MFunMacro));
+    fm->Last = funmacros;
+    funmacros = fm;
+    /* TODO: error */
+    fm->HashedName = hashName(li->N->V.S);
+    fm->Name = li->N->V.S;
+    l = evalList(li->N->N);
+    if (l->T != tyFun) {
+      compileError(*l, "ctfe: macro: wrong type, expected function");
+    }
+    fm->Fun = *(struct MFun *)l->V.D;
+    return NULL;
+  }
   case bmDebugPrint:
     checkArgs(li, 1);
     compileHint(*li->N, "debug print requested: \"\"");
     printList(evalList(li->N), 0);
     /* TODO: proper printList */
     return NULL;
+  case bmFindStruct: {
+    struct LE *r, *a;
+    checkArgs(li, 1);
+    r = getMem(sizeof(struct LE));
+    r->T = tyStruct;
+    a = evalList(li->N);
+    if (a->T != tyString) {
+      compileError(*li->N, "ctfe: find-struct: wrong type, expected a string");
+    }
+    r->V.D = tryLookupStruct(a->V.S);
+    if (!r->V.D) {
+      compileError(*li->N, "ctfe: find-struct: struct not found: %s", a->V.S);
+    }
+    return r;
+  }
+  case bmGetStructName: {
+    struct LE *r, *a;
+    checkArgs(li, 1);
+    a = evalList(li->N);
+    r = getMem(sizeof(struct LE));
+    r->T = tyString;
+    if (a->T != tyStruct) {
+      compileError(*li->N, "ctfe: %s: wrong type, expected a struct", li->V.S);
+    }
+    r->V.S = (char *)getStructName((struct IStruct *)a->V.D);
+    return r;
+  }
+  case bmAddMemberMacro: {
+    struct LE *s, *name, *fn;
+    struct MMemberMacro *mac;
+    checkArgs(li, 3);
+    s = evalList(li->N);
+    name = evalList(li->N->N);
+    fn = evalList(li->N->N->N);
+    if (s->T != tyStruct) {
+      compileError(*li->N, "ctfe: %s: wrong type, expected a struct", li->V.S);
+    }
+    if (name->T != tyString) {
+      compileError(*li->N->N, "ctfe: %s: wrong type, expected a string",
+                   li->V.S);
+    }
+    if (fn->T != tyFun) {
+      compileError(*li->N->N->N, "ctfe: %s: wrong type, expected a function",
+                   li->V.S);
+    }
+    mac = getMem(sizeof(struct MMemberMacro));
+    mac->Fun = *(struct MFun *)fn->V.D;
+    if (mac->Fun.Args->T != tyList || !mac->Fun.Args->V.L ||
+        !mac->Fun.Args->V.L->N || mac->Fun.Args->V.L->N->N) {
+      compileError(*li, "ctfe: unsuitable function for member macro");
+    }
+    addMemberMacro((struct IStruct *)s->V.D, name->V.S, mac);
+    return NULL;
+  }
   case bmNoBuiltin: {
     struct MVar *v;
     struct MScope *sc;
@@ -753,4 +878,76 @@ struct LE *evalList(struct LE *li) {
   } break;
   }
   return NULL;
+}
+
+struct LE *tryCallAsMacro(const char *name, struct LE *args) {
+  unsigned long hash;
+  struct MFunMacro *m;
+  hash = hashName(name);
+  for (m = funmacros; m; m = m->Last) {
+    if (hash == m->HashedName && strcmp(name, m->Name) == 0) {
+      struct MScope scope;
+      struct LE *r;
+      struct MFun *f;
+      f = &m->Fun;
+      scope.Parent = curmscope;
+      curmscope = &scope;
+      if (f->Args->T == tyList) {
+        struct LE *l, *la;
+        struct MVar *v;
+        scope.Vars = NULL;
+        for (l = f->Args->V.L, la = args; 1; l = l->N, la = la->N) {
+          if (!l != !la) {
+            compileError(*la, "ctfe: too many or too few arguments in function "
+                              "call"); /* TODO: be
+                                    more
+                                    specific */
+            break;
+          }
+          if (!l && !la) {
+            break;
+          }
+          v = getMem(sizeof(struct MVar));
+          v->Last = scope.Vars;
+          scope.Vars = v;
+          v->HashedName = hashName(l->V.S);
+          v->Name = l->V.S;
+          v->Value = *la;
+        }
+      } else {
+        scope.Vars = getMem(sizeof(struct MVar));
+        scope.Vars->HashedName = hashName(f->Args->V.S);
+        scope.Vars->Name = f->Args->V.S;
+        scope.Vars->Value.T = tyList;
+        scope.Vars->Value.V.L = args;
+      }
+      r = evalList(f->L);
+      curmscope = scope.Parent;
+      return r;
+    }
+  }
+
+  compileError(*args, "unknown function: \"%s\"", name);
+  return NULL; /* never reached */
+}
+
+struct LE *callMemberMacro(struct MMemberMacro *m, struct LE *t,
+                           const char *member_name, struct LE *li) {
+  struct MScope scope;
+  struct LE *r;
+  (void)li;
+  scope.Parent = curmscope;
+  curmscope = &scope;
+  scope.Vars = getMem(sizeof(struct MVar));
+  scope.Vars->HashedName = hashName(m->Fun.Args->V.L->V.S);
+  scope.Vars->Name = m->Fun.Args->V.L->V.S;
+  scope.Vars->Value = *t;
+  scope.Vars->Last = getMem(sizeof(struct MVar));
+  scope.Vars->Last->HashedName = hashName(m->Fun.Args->V.L->N->V.S);
+  scope.Vars->Last->Name = m->Fun.Args->V.L->N->V.S;
+  scope.Vars->Last->Value.T = tyString;
+  scope.Vars->Last->Value.V.S = (char *)member_name;
+  r = evalList(m->Fun.L);
+  curmscope = scope.Parent;
+  return r;
 }

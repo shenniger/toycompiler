@@ -41,16 +41,40 @@ struct LE *copyList(struct LE *l);
 void initParser();
 void parseSrc(struct LE *list);
 
+struct IStruct;      /* silences compiler warning */
+struct MMemberMacro; /* silences compiler warning */
+struct IType;        /* silences compiler warning */
+
 /* middle end (ctfe) */
 void initEvaluator();
 struct LE *evalList(struct LE *li);
+struct LE *tryCallAsMacro(const char *name, struct LE *args);
+struct LE *callMemberMacro(struct MMemberMacro *m, struct LE *t,
+                           const char *member_name, struct LE *li);
+
+/* introspection */
+struct IStruct *tryLookupStruct(const char *name);
+void addMemberMacro(struct IStruct *s, const char *name,
+                    struct MMemberMacro *m);
+const char *getStructName(struct IStruct *s);
+/* TODO: include support in the middle end */
+struct IStructMemberIt *getStructMembers(struct IStruct *s);
+struct IStructMemberIt *nextStructMember(struct IStructMemberIt *it);
+const char *getStructMemberName(struct IStructMemberIt *it);
+struct IType *getStructMemberType(struct IStructMemberIt *it);
+/* TODO: IType */
 
 /* code generator */
+struct BFunction; /* silences compiler warning */
+struct BType;     /* silences compiler warning */
+enum { ifSigned = 0x1, ifCType = 0x2, ifChar = 0x4 }; /* int flags */
+enum { ffStatic = 0x1, ffInline = 0x2 };              /* function flags */
+enum { gfStatic = 0x1, gfExtern = 0x2 };              /* globals flags */
+
 void initCodegen();
 void finalizeCodegen();
 
 struct BStruct *beginStruct(const char *name);
-struct BType; /* silences compiler warning */
 struct BStructMember *addToStruct(struct BStruct *st, const char *name,
                                   struct BType *type);
 void endStruct(struct BStruct *st);
@@ -58,7 +82,6 @@ void endStruct(struct BStruct *st);
 struct BExpr *structMemb(struct BExpr *st, struct BStructMember *memb);
 
 struct BType *voidType();
-enum { ifSigned = 0x1, ifCType = 0x2, ifChar = 0x4 };
 struct BType *intType(int flags, int size); /* size in bytes */
 struct BType *floatType(int size);          /* size in bytes */
 struct BType *structType(struct BStruct *st);
@@ -73,7 +96,6 @@ void constType(struct BType *t);
 
 struct BExpr *derefPtr(struct BExpr *e);
 struct BExpr *refof(struct BExpr *e);
-struct BFunction; /* silences compiler warning */
 struct BExpr *fnRefof(struct BFunction *f);
 
 struct BExpr *intLiteral(int val);
@@ -93,14 +115,12 @@ struct BExpr *arithmeticFPOp(const char *op, struct BExpr *a, struct BExpr *b,
 struct BTemporary *addTemporary(struct BExpr *e, struct BType *t);
 struct BExpr *tmpInstance(struct BTemporary *tmp);
 
-enum { ffStatic = 0x1, ffInline = 0x2 };
 void beginFnPrototype(const char *name, struct BType *rettype, int flags);
 struct BFunction *endFnPrototype(int addBody);
 void endFnBody(struct BExpr *e);
 
 struct BVar *addVariable(const char *name, struct BType *t);
 struct BVar *addParameter(const char *name, struct BType *t);
-enum { gfStatic = 0x1, gfExtern = 0x2 };
 struct BVar *addGlobal(const char *name, struct BType *t, int flags);
 
 struct BExpr *varUsage(struct BVar *p);
@@ -122,8 +142,6 @@ void beginWhileLoop(struct BExpr *cond);
 void endWhileLoop();
 void breakLoop();
 void continueLoop();
-
-void TODO_print(struct BExpr *a);
 
 void addEvaluation(struct BExpr *a);
 

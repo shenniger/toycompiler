@@ -130,12 +130,20 @@ struct FStructMember {
   struct LE *L; /* stupid hack */
 };
 
+struct FMemberMacro {
+  unsigned long HashedName;
+  const char *Name;
+  struct MMemberMacro *Middleend;
+  struct FMemberMacro *Last;
+};
+
 struct FStruct {
   unsigned long HashedName;
   const char *Name;
   struct BStruct *Backend;
   struct FStructMember *Members;
   unsigned long NMembers;
+  struct FMemberMacro *Macros;
   struct FStruct *Last;
 };
 
@@ -405,7 +413,6 @@ enum {
   bcPtrRefof,
   bcFuncall,
   bcGlobal,
-  bcTODO_Print,
   bcTODO_Set,
   bcTODO_Var
 };
@@ -414,7 +421,7 @@ struct BuiltinCommand {
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinCommand builtincommands[36];
+static struct BuiltinCommand builtincommands[35];
 
 enum {
   btNoBuiltin,
@@ -488,7 +495,6 @@ void initParser() {
   ADDCMD("ptrto", bcPtrRefof)
   ADDCMD("ptr-deref", bcPtrDeref)
   ADDCMD("funcall", bcFuncall)
-  ADDCMD("print", bcTODO_Print)
   ADDCMD("set", bcTODO_Set)
   ADDCMD("var", bcTODO_Var)
 
@@ -1120,8 +1126,7 @@ struct FFunction *findFunction(const char *name, unsigned long hash,
       return r;
     }
   }
-  compileError(*li, "unknown function: \"%s\"", name);
-  return NULL; /* silences compiler warning */
+  return NULL;
 }
 
 struct FFunction *findSimpleFunction(const char *name, unsigned long hash,
@@ -1161,6 +1166,9 @@ struct FExpr parseFuncall(struct LE *li, unsigned long hash,
     argsparsed[i] = parse(l, lvFun);
   }
   fn = findFunction(li->V.S, hash, scope, argsparsed, argsLen, li);
+  if (!fn) {
+    return parse(tryCallAsMacro(li->V.S, li->N), lvFun);
+  }
   c = beginFuncall(fn->Backend);
   for (l = li->N, i = 0; l; l = l->N, ++i) {
     f = convertType(argsparsed[i], fn->Parms[i].Type, l);
@@ -1250,11 +1258,13 @@ static void parseStruct(struct LE *li) {
   st->Last = structs;
   structs = st;
 }
-static struct FExpr parseMemb(struct LE *li, struct FExpr st) {
+static struct FExpr parseMemb(struct LE *li, struct FExpr st, struct LE *stli,
+                              int lvl) {
   /* TODO: error */
   struct FStructMember *smemb, *endmemb;
   unsigned long hash;
   struct FExpr r;
+  struct FMemberMacro *mac;
   if (st.Type.Type != ttStruct) {
     compileError(*li, "member access of non-struct");
   }
@@ -1265,6 +1275,11 @@ static struct FExpr parseMemb(struct LE *li, struct FExpr st) {
       r.Backend = structMemb(st.Backend, smemb->Backend);
       r.Type = smemb->Type;
       return r;
+    }
+  }
+  for (mac = st.Type.Data.Struct.S->Macros; mac; mac = mac->Last) {
+    if (mac->HashedName == hash && strcmp(mac->Name, li->N->V.S) == 0) {
+      return parse(callMemberMacro(mac->Middleend, stli, li->N->V.S, li), lvl);
     }
   }
   compileError(*li->N, "member not found (in %s): \"%s\"", printType(st.Type),
@@ -1453,9 +1468,6 @@ static struct FExpr parse(struct LE *l, int lvl) {
       case bcCast:
         /* TODO: error */
         return parseExplicitCast(parse(li->N->N, lvl), parseType(li->N, 0), li);
-      case bcTODO_Print:
-        TODO_print(parse(li->N, lvl).Backend);
-        break;
       case bcTODO_Set: {
         struct FExpr lhs, rhs;
         lhs = parse(li->N, lvl);
@@ -1565,7 +1577,7 @@ static struct FExpr parse(struct LE *l, int lvl) {
         return a;
       }
       case bcMemb:
-        return parseMemb(li->N, parse(li->N, lvl));
+        return parseMemb(li->N, parse(li->N, lvl), li->N, lvl);
       case bcFuncall:
         return parseFunPtrCall(parse(li->N, lvl), li->N);
       }
@@ -1608,4 +1620,65 @@ void parseSrc(struct LE *list) {
   l.T = tyList;
   l.V.L = list;
   parse(&l, lvTop);
+}
+
+/* introspection */
+struct IStruct *tryLookupStruct(const char *name) {
+  struct FStruct *s;
+  unsigned long hash;
+  hash = hashName(name);
+  for (s = structs; s; s = s->Last) {
+    if (s->HashedName == hash && strcmp(s->Name, name) == 0) {
+      return (struct IStruct *)s;
+    }
+  }
+  return NULL;
+}
+const char *getStructName(struct IStruct *s) {
+  return ((struct FStruct *)s)->Name;
+}
+struct IStructMemberIt {
+  struct FStructMember *A;
+  unsigned long MembersLeft;
+};
+struct IStructMemberIt *getStructMembers(struct IStruct *s) {
+  struct IStructMemberIt *r;
+  if (!s) {
+    return NULL;
+  }
+  if (!((struct FStruct *)s)->NMembers) {
+    return NULL;
+  }
+  r = getMem(sizeof(struct IStructMemberIt));
+  r->A = ((struct FStruct *)s)->Members;
+  r->MembersLeft = ((struct FStruct *)s)->NMembers - 1;
+  return r;
+}
+struct IStructMemberIt *nextStructMember(struct IStructMemberIt *it) {
+  /* we invalidate the iterator in our argument */
+  if (!it) {
+    return NULL;
+  }
+  if (!it->MembersLeft) {
+    return NULL;
+  }
+  it->MembersLeft--;
+  ++it->A;
+  return it;
+}
+const char *getStructMemberName(struct IStructMemberIt *it) {
+  return it->A->Name;
+}
+struct IType *getStructMemberType(struct IStructMemberIt *it) {
+  return (struct IType *)&it->A->Type;
+}
+void addMemberMacro(struct IStruct *s, const char *name,
+                    struct MMemberMacro *m) {
+  struct FMemberMacro *f;
+  f = getMem(sizeof(struct FMemberMacro));
+  f->HashedName = hashName(name);
+  f->Name = name;
+  f->Middleend = m;
+  f->Last = ((struct FStruct *)s)->Macros;
+  ((struct FStruct *)s)->Macros = f;
 }

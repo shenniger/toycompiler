@@ -1,10 +1,10 @@
 ; A sample file
-
-; printf with a number
-(funproto printf (((ptr const char) fmt) (i32 a)) (c-type int))
-
-(defun main () (c-type int) (
-  (printf "test: %i\n" 16)
-  (printf "another test: %i\n" 98)
-  (cast (c-type int) 0)))
-
+(struct Point ((i32 x y)))
+(static-run (
+  (add-member-macro (find-struct "Point") "both" 
+    (lambda (a name) (quasiquote (+ (memb (quasiunquote a) x) (memb (quasiunquote a) y)))))))
+(defun main () i32 (
+  (var Point a)
+  (set (memb a x) 10)
+  (set (memb a y) 12)
+  (memb a both)))
