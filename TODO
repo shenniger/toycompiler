@@ -25,6 +25,15 @@ TODO List: EigenesScheme
 [X] Struct Equals
 => FINISHED. 13.10.2017
 
+--- Additional language features ---
+[ ] VA Args
+[ ] Array Initializers
+[ ] Unions
+[ ] Bitsets
+[ ] Volatile
+[ ] Unreachability
+[ ] Sizeof
+
 --- Advanced language features ---
 [ ] Closures
 [ ] Operator Overloading
@@ -51,7 +60,8 @@ TODO List: EigenesScheme
 [ ] RAII
 [ ] Vectors
 [ ] OOP
-[ ] Save memory during compilation
-[ ] Initial LLVM Backend
+[ ] Save memory during compilation (C backend)
+[X] Initial LLVM Backend
+[ ] LLVM versions of C primitive functions (memset etc)
 [ ] C Header Parsing
 [ ] Nicer name (say "CRISP"?)

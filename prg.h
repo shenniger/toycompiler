@@ -65,8 +65,9 @@ struct IType *getStructMemberType(struct IStructMemberIt *it);
 /* TODO: IType */
 
 /* code generator */
-struct BFunction; /* silences compiler warning */
-struct BType;     /* silences compiler warning */
+struct BFunction;   /* silences compiler warning */
+struct BType;       /* silences compiler warning */
+struct BStructType; /* silences compiler warning */
 enum { ifSigned = 0x1, ifCType = 0x2, ifChar = 0x4 }; /* int flags */
 enum { ffStatic = 0x1, ffInline = 0x2 };              /* function flags */
 enum { gfStatic = 0x1, gfExtern = 0x2 };              /* globals flags */
@@ -79,7 +80,8 @@ struct BStructMember *addToStruct(struct BStruct *st, const char *name,
                                   struct BType *type);
 void endStruct(struct BStruct *st);
 
-struct BExpr *structMemb(struct BExpr *st, struct BStructMember *memb);
+struct BExpr *structMemb(struct BExpr *st, struct BStruct *type,
+                         struct BStructMember *memb);
 
 struct BType *voidType();
 struct BType *intType(int flags, int size); /* size in bytes */
@@ -102,8 +104,13 @@ struct BExpr *intLiteral(int val);
 struct BExpr *floatLiteral(double val);
 struct BExpr *stringLiteral(const char *val);
 
-struct BExpr *castNum(struct BExpr *a, struct BType *t);
+struct BExpr *castInt(struct BExpr *a, struct BType *t, int issigned);
+struct BExpr *castFloat(struct BExpr *a, struct BType *t);
 struct BExpr *castPtr(struct BExpr *a, struct BType *t);
+struct BExpr *castIntToFloat(struct BExpr *a, struct BType *t, int issigned);
+struct BExpr *castFloatToInt(struct BExpr *a, struct BType *t, int issigned);
+struct BExpr *castIntToPtr(struct BExpr *a, struct BType *t);
+struct BExpr *castPtrToInt(struct BExpr *a, struct BType *t);
 
 struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b,
                            int result_flags, int result_size, int ptr);
@@ -121,6 +128,7 @@ void endFnBody(struct BExpr *e);
 
 struct BVar *addVariable(const char *name, struct BType *t);
 struct BVar *addParameter(const char *name, struct BType *t);
+struct BVar *updateParameter(struct BVar *v);
 struct BVar *addGlobal(const char *name, struct BType *t, int flags);
 
 struct BExpr *varUsage(struct BVar *p);
@@ -138,7 +146,8 @@ void beginIfElseStmt(struct BExpr *cond);
 void *elseIfStmt(struct BExpr *r, struct BType *rettype);
 struct BExpr *endIfElseStmt(void *last, struct BExpr *r);
 
-void beginWhileLoop(struct BExpr *cond);
+void beginWhileLoopCond();
+void beginWhileLoopBody(struct BExpr *cond);
 void endWhileLoop();
 void breakLoop();
 void continueLoop();

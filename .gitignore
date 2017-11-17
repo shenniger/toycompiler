@@ -1,6 +1,6 @@
 *.bak
 *.swp
-test
+test*
 callgrind.*
 *.o
 *.dwo

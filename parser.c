@@ -200,6 +200,7 @@ static struct FExpr makeExpr(struct BExpr *backend, struct FType type) {
 
 static const char *printType(struct FType t) {
   const char *r;
+  r = NULL;
   if (t.AliasUsed) {
     t.AliasUsed = t.AliasUsed->T.AliasUsed;
     return printToMem("%s [aka %s]", t.AliasUsed->Name, printType(t));
@@ -340,7 +341,8 @@ static int tryConvertType(struct FExpr e, struct FType want, struct FExpr *r) {
         want.Data.Int.IntSize > e.Type.Data.Int.IntSize) {
       if (r) {
         e.Type = want;
-        e.Backend = castNum(e.Backend, want.Backend);
+        e.Backend =
+            castInt(e.Backend, want.Backend, e.Type.Data.Int.Flags & ifSigned);
         *r = e;
       }
       return 0;
@@ -349,7 +351,7 @@ static int tryConvertType(struct FExpr e, struct FType want, struct FExpr *r) {
     if (e.Type.Data.FloatSize < want.Data.FloatSize) {
       if (r) {
         e.Type = want;
-        e.Backend = castNum(e.Backend, want.Backend);
+        e.Backend = castFloat(e.Backend, want.Backend);
         *r = e;
       }
       return 0;
@@ -370,10 +372,27 @@ static struct FExpr convertType(struct FExpr e, struct FType want,
 static struct FExpr parseExplicitCast(struct FExpr e, struct FType want,
                                       struct LE *li) {
   want.Flags = e.Type.Flags;
-  if ((e.Type.Type == ttInt || e.Type.Type == ttFloat) &&
-      (want.Type == ttInt || want.Type == ttFloat)) {
+  if (e.Type.Type == ttInt && want.Type == ttInt) {
     e.Type = want;
-    e.Backend = castNum(e.Backend, want.Backend);
+    e.Backend =
+        castInt(e.Backend, want.Backend, e.Type.Data.Int.Flags & ifSigned);
+    return e;
+  }
+  if (e.Type.Type == ttFloat && want.Type == ttFloat) {
+    e.Type = want;
+    e.Backend = castFloat(e.Backend, want.Backend);
+    return e;
+  }
+  if (e.Type.Type == ttInt && want.Type == ttFloat) {
+    e.Type = want;
+    e.Backend = castIntToFloat(e.Backend, want.Backend,
+                               e.Type.Data.Int.Flags & ifSigned);
+    return e;
+  }
+  if (e.Type.Type == ttFloat && want.Type == ttInt) {
+    e.Type = want;
+    e.Backend =
+        castFloatToInt(e.Backend, want.Backend, want.Data.Int.Flags & ifSigned);
     return e;
   }
   if (e.Type.Type == ttPointer && want.Type == ttPointer &&
@@ -828,6 +847,9 @@ static void parseDefun(struct LE *li, struct FScope *scope, int lvl,
   fn->Backend = endFnPrototype(!proto /* add body */);
 
   if (!proto) {
+    for (i = 0; i < fn->NParms; ++i) {
+      fn->Parms[i].Backend = updateParameter(fn->Parms[i].Backend);
+    }
     ret = parse(li->N->N->N, lvFun);
     if (fn->RetType.Type != ttVoid) {
       ret = convertType(ret, fn->RetType, li->N->N->N);
@@ -944,6 +966,7 @@ static struct FExpr parseArm(struct LE *li, const char *op) {
 static struct FExpr parseCmp(const char *op, struct FExpr a, struct FExpr b,
                              struct LE *l) {
   struct FExpr r;
+  /* TODO: POINTERS!!! */
   r.Type.Type = ttInt;
   r.Type.AliasUsed = NULL;
   r.Type.Flags = 0;
@@ -964,21 +987,24 @@ static struct FExpr parseCmp(const char *op, struct FExpr a, struct FExpr b,
     unsigned i;
     last = NULL;
     st = a.Type.Data.Struct.S;
-    /* use a pointer instead of copying the struct */
+    /* TODO: maybe use a pointer instead of copying the struct? */
     tmp1 = addTemporary(a.Backend, a.Type.Backend);
     tmp2 = addTemporary(b.Backend, b.Type.Backend);
     for (i = 0; i < a.Type.Data.Struct.S->NMembers; ++i) {
       struct BExpr *e;
       e = arithmeticOp(
-          op, structMemb(tmpInstance(tmp1), st->Members[i].Backend),
-          structMemb(tmpInstance(tmp2), st->Members[i].Backend), 1, 1, 0);
+          op,
+          structMemb(tmpInstance(tmp1), st->Backend, st->Members[i].Backend),
+          structMemb(tmpInstance(tmp2), st->Backend, st->Members[i].Backend), 1,
+          1, 0);
+      /* TODO: OTHER COMPARISONS THAN arithmeticOp!!! */
       if (last) {
         last = arithmeticOp("&&", last, e, 1, 1, 0);
       } else {
         last = e;
       }
     }
-    r.Backend = last ? last : castNum(intLiteral(1), r.Type.Backend);
+    r.Backend = last ? last : castInt(intLiteral(1), r.Type.Backend, 1);
   } else {
     compileError(*l, "don't know how to compare %s and %s", printType(a.Type),
                  printType(b.Type));
@@ -994,6 +1020,7 @@ static struct FExpr parseIf(struct LE *li, int lvl) {
   struct FExpr e;
   struct FExpr cond, ifpart, elsepart;
   newscope.Vars = NULL;
+  newscope.Funs = NULL;
   newscope.Parent = curscope;
   curscope = &newscope;
   if (li->N->N) {
@@ -1029,12 +1056,14 @@ static void parseWhile(struct LE *li, int lvl) {
   struct FExpr cond;
   newscope.Vars = NULL;
   newscope.Parent = curscope;
+  newscope.Funs = NULL;
   curscope = &newscope;
+  beginWhileLoopCond();
   cond = parse(li, lvl);
   if (!typeWorksAsCondition(cond.Type)) {
     compileError(*li, "ill typed condition");
   }
-  beginWhileLoop(cond.Backend);
+  beginWhileLoopBody(cond.Backend);
   addEvaluation(parse(li->N, lvl | lvLoop).Backend);
   endWhileLoop();
   curscope = curscope->Parent;
@@ -1272,7 +1301,8 @@ static struct FExpr parseMemb(struct LE *li, struct FExpr st, struct LE *stli,
   endmemb = st.Type.Data.Struct.S->Members + st.Type.Data.Struct.S->NMembers;
   for (smemb = st.Type.Data.Struct.S->Members; smemb != endmemb; ++smemb) {
     if (smemb->HashedName == hash && strcmp(smemb->Name, li->N->V.S) == 0) {
-      r.Backend = structMemb(st.Backend, smemb->Backend);
+      r.Backend = structMemb(st.Backend, st.Type.Data.Struct.S->Backend,
+                             smemb->Backend);
       r.Type = smemb->Type;
       return r;
     }
@@ -1347,9 +1377,9 @@ static void parseGlobal(struct LE *l) {
   }
   gl = getMem(sizeof(struct FGlobal));
   gl->Last = globals;
-  gl->HashedName = hashName(l->N->V.S);
-  gl->Name = l->N->V.S;
-  gl->Type = parseType(l, 0);
+  gl->HashedName = hashName(l->V.S);
+  gl->Name = l->V.S;
+  gl->Type = parseType(l->N, 0);
   gl->Flags = flags;
   gl->Backend = addGlobal(gl->Name, gl->Type.Backend, gl->Flags);
   globals = gl;
@@ -1519,7 +1549,7 @@ static struct FExpr parse(struct LE *l, int lvl) {
       case bcUnary: {
         struct FExpr a;
         a = parse(li->N, lvl);
-        /* TODO: check type */
+        /* TODO: check type; POINTERS!!! */
         return makeExpr(unaryOp(*li->V.S, a.Backend, a.Type.Data.Int.Flags,
                                 a.Type.Data.Int.IntSize),
                         a.Type);

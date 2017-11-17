@@ -1,8 +1,36 @@
-#all:
-#	gcc front.c -o front.o -c -g
-#	gcc main.c -o main.o -c -g
-#	gcc back.c -o back.o -c -g
-#	g++ -std=c++14 -pedantic -Wall -Wextra back_llvm.cpp -o test -g `llvm-config-3.8 --cxxflags --ldflags` main.o front.o back.o -lLLVM -g
+all: test_llvm test_c
 
-all:
-	gcc -Wall -Wextra -pedantic -std=c99 -g *.c -o test -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -lm
+CC ?= gcc
+CXX ?= g++
+
+MODE ?= -g -O0
+
+%.o: %.c prg.h
+	$(CC) -c -Wall -Wextra -pedantic -std=c99 \
+		-Wno-int-to-pointer-cast -Wno-pointer-to-int-cast $< -o $@ $(MODE)
+
+back_llvm.o: back_llvm.cpp prg.h 
+	$(CXX) -c -Wall -Wextra -pedantic -std=c++14 -o back_llvm.o back_llvm.cpp \
+		$(shell llvm-config --cxxflags --system-libs --libs core) $(MODE) \
+		-Wno-int-to-pointer-cast -fno-rtti \
+#		-Wno-return-type # temporary measure. REMOVE THIS WHEN back_llvm is finished!
+
+test_c: main.o reader.o parser.o middle.o back_c.o
+	$(CC) $^ -o $@ -lm $(MODE)
+
+test_llvm: main.o reader.o parser.o middle.o back_llvm.o
+	$(CXX) $^ -o $@ -lm -fno-rtti \
+		$(shell llvm-config --ldflags --system-libs --libs core) $(MODE)
+
+.PHONY: report clean
+report:
+	@echo Using C compiler: $(CC)
+	@echo Using C++/LLVM compiler: $(CXX)
+	@echo Using LLVM version: $(shell llvm-config --version)
+	@echo Debug/Release flags: $(MODE)
+
+clean:
+	rm *.o || true
+	rm *.dwo || true
+	rm test_llvm || true
+	rm test_c || true

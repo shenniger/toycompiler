@@ -1,10 +1,48 @@
 ; A sample file
-(struct Point ((i32 x y)))
-(static-run (
-  (add-member-macro (find-struct "Point") "both" 
-    (lambda (a name) (quasiquote (+ (memb (quasiunquote a) x) (memb (quasiunquote a) y)))))))
-(defun main () i32 (
-  (var Point a)
-  (set (memb a x) 10)
-  (set (memb a y) 12)
-  (memb a both)))
+;(defun main (((funptr i32 (i32 i32 i32)) a)) i32 (funcall a 3 5 7))
+;(defun f () float 3.2)
+;(defun myfun ((i32 a b c)) i32 4)
+;
+;(defun a () i32 (main myfun))
+;
+;(funproto puts (((ptr const char) str)) i32)
+;(defun main () i32 (
+;  (puts "Hallo Welt!")
+;  0))
+;
+;(defun a () (ptr const char) "Hallo")
+;
+;(global a (array 10 i32))
+;(defun geta () (ptr i32) a)
+;(defun seta ((i32 x)) void (set (ptr-deref (+ a 1)) x)) ; TODO!!!
+;
+;(global a i32)
+;(defun seta ((i32 b)) void (set a b))
+;(defun getval ((i32 a b)) i32 (
+;  (var i32 x a)
+;  (set x b)
+;  (set x a)
+;  (set x b)
+;  x))
+;(static-run (var stuff (scope (
+;  (var i 1000000)
+;  (var l (quote ()))
+;  (while (!= i 0) (
+;    (set l (append-first l (quasiquote ((p (quasiunquote i))))))
+;    (set i (- i 1))))
+;  l))))
+;(defun main2 () i32 ((static stuff) 0))
+;(funproto p ((i32 a)) void)
+;(defun abc ((i32 a)) void (if a (puts "H")))
+;(defun abcd ((i32 a)) i32 (if a 12 9))
+;(funproto a () i32)
+;(defun abc () void (while (a) (a)))
+;
+;(struct A ((i32 a b c d e f) (float x y)))
+;(defun construct-a () A (
+;  (var A x)
+;  x))
+;(defun get-b ((A a)) i32 (memb a c))
+;(defun get-y ((A a)) float (memb a y))
+
+(defun isgreater ((float a b)) float (+ a b))

@@ -138,7 +138,9 @@ struct BStructMember *addToStruct(struct BStruct *st, const char *name,
 }
 void endStruct(struct BStruct *st) { (void)st, puts("};"); }
 
-struct BExpr *structMemb(struct BExpr *st, struct BStructMember *memb) {
+struct BExpr *structMemb(struct BExpr *st, struct BStruct *type,
+                         struct BStructMember *memb) {
+  (void)type;
   st->A = printToMem("%s.%s", st->A, memb->Name);
   return st;
 }
@@ -226,12 +228,30 @@ struct BExpr *refof(struct BExpr *e) {
   return e;
 }
 
-struct BExpr *castNum(struct BExpr *a, struct BType *t) {
+struct BExpr *castInt(struct BExpr *a, struct BType *t, int issigned) {
+  (void)issigned;
   a->A = printToMem("((%s)%s)", t->A, a->A);
   return a;
 }
+struct BExpr *castFloat(struct BExpr *a, struct BType *t) {
+  return castInt(a, t, 0); /* same cast in C */
+}
 struct BExpr *castPtr(struct BExpr *a, struct BType *t) {
-  return castNum(a, t); /* same cast in C */
+  return castInt(a, t, 0); /* same cast in C */
+}
+struct BExpr *castIntToFloat(struct BExpr *a, struct BType *t, int issigned) {
+  (void)issigned;
+  return castInt(a, t, 0); /* same cast in C */
+}
+struct BExpr *castFloatToInt(struct BExpr *a, struct BType *t, int issigned) {
+  (void)issigned;
+  return castInt(a, t, 0); /* same cast in C */
+}
+struct BExpr *castIntToPtr(struct BExpr *a, struct BType *t) {
+  return castInt(a, t, 0); /* same cast in C */
+}
+struct BExpr *castPtrToInt(struct BExpr *a, struct BType *t) {
+  return castInt(a, t, 0); /* same cast in C */
 }
 
 struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b,
@@ -370,6 +390,9 @@ struct BVar *addParameter(const char *name, struct BType *type) {
   curfn->Parms[curfn->NParms].T = type;
   return &curfn->Parms[curfn->NParms++].V;
 }
+struct BVar *updateParameter(struct BVar *a) {
+  return a;
+}
 struct BVar *addGlobal(const char *name, struct BType *t, int flags) {
   struct BVar *a;
   a = getMem(sizeof(struct BVar));
@@ -491,7 +514,9 @@ struct BExpr *endIfElseStmt(void *last, struct BExpr *r) {
   }
 }
 
-void beginWhileLoop(struct BExpr *cond) {
+void beginWhileLoopCond() {}
+void beginWhileLoopBody(struct BExpr *cond) {
+  /* TODO: cond->Before!!! */
   appendStringList(&curfn->Var, cond->Var);
   appendStringList(&curfn->Body, cond->Before);
   appendString(&curfn->Body, printToMem("while(%s) {", cond->A));

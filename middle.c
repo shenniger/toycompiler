@@ -696,8 +696,12 @@ static struct LE *evalFuncall(struct LE *li) {
     scope.Parent = curmscope;
     curmscope = &scope;
     ret = evalList(li->N);
-    newret = getMem(sizeof(struct LE));
-    *newret = *ret;
+    if (ret) {
+      newret = getMem(sizeof(struct LE));
+      *newret = *ret;
+    } else {
+      newret = NULL;
+    }
     curmscope = scope.Parent;
     return newret;
   }
