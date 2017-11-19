@@ -331,8 +331,8 @@ static int tryConvertType(struct FExpr e, struct FType want, struct FExpr *r) {
     }
     return 0;
   }
-  want.Flags = e.Type.Flags & want.Type;
   if (want.Type == ttInt && e.Type.Type == ttInt) {
+    want.Flags = e.Type.Flags & want.Type;
     /*
      * Signed   -> Unsigned => NEVER WORKS
      * Unsigned -> Signed   => Works if WantedSize >  HaveSize
@@ -352,6 +352,7 @@ static int tryConvertType(struct FExpr e, struct FType want, struct FExpr *r) {
       return 0;
     }
   } else if (want.Type == ttFloat && e.Type.Type == ttFloat) {
+    want.Flags = e.Type.Flags & want.Type;
     if (e.Type.Data.FloatSize < want.Data.FloatSize) {
       if (r) {
         e.Type = want;
@@ -360,6 +361,39 @@ static int tryConvertType(struct FExpr e, struct FType want, struct FExpr *r) {
       }
       return 0;
     }
+  }
+  {
+    struct FFunction *f, *chosen;
+    struct FExpr fake;
+    fake.Backend = NULL;
+    chosen = NULL;
+    for (f = currentffunction; f; f = f->Last) {
+      if (f->Flags & ffImplicitCast) {
+        fake.Type = f->RetType;
+        if (!tryConvertType(e, f->Parms[0].Type, NULL) &&
+            !tryConvertType(fake, want, NULL)) {
+          if (chosen) {
+            chosen = NULL;
+            break;
+            /* TODO: find a better solution */
+          }
+          chosen = f;
+        }
+      }
+    }
+    if (chosen && r) {
+      struct FExpr funval;
+      struct BIncompleteFuncall *call;
+      funval = e;
+      assert(!tryConvertType(funval, chosen->Parms[0].Type, &funval));
+      e.Type = chosen->RetType;
+      call = beginFuncall(chosen->Backend);
+      addArg(call, funval.Backend);
+      e.Backend = endFuncall(call);
+      assert(!tryConvertType(e, want, &e));
+      *r = e;
+    }
+    return chosen == NULL;
   }
   return 1;
 }

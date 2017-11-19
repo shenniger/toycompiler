@@ -38,7 +38,7 @@ TODO List: EigenesScheme
 --- Advanced language features ---
 [ ] Closures
 [ ] Operator Overloading
-[ ] Custom conversions
+[X] Custom conversions
 [ ] Auto-Arg Closures
 [X] Proper C Types and Chars
 
