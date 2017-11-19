@@ -44,5 +44,15 @@
 ;  x))
 ;(defun get-b ((A a)) i32 (memb a c))
 ;(defun get-y ((A a)) float (memb a y))
+;(defun isgreater ((float a b)) float (+ a b))
 
-(defun isgreater ((float a b)) float (+ a b))
+
+(struct Point ((i32 x y)))
+(struct Size ((i32 w h)))
+(defun (explicit-cast) cast-point-to-size ((Point p)) Size (
+  (var Size r)
+  (set (memb r w) (memb p x))
+  (set (memb r h) (memb p y))
+ r))
+(funproto use-size ((Size s)) void)
+(defun user ((Point p)) void (use-size (cast Size p)))

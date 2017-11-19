@@ -33,6 +33,7 @@ TODO List: EigenesScheme
 [ ] Volatile
 [ ] Unreachability
 [ ] Sizeof
+[ ] Unknown Structs
 
 --- Advanced language features ---
 [ ] Closures

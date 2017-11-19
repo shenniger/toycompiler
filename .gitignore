@@ -1,6 +1,8 @@
 *.bak
 *.swp
 test*
+chdrconv
+a.out
 callgrind.*
 *.o
 *.dwo

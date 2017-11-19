@@ -5,6 +5,7 @@
 #include <string.h>
 
 enum { lvTop = 0x1, lvFun = 0x2, lvLoop = 0x4 };
+enum { ffExplicitCast = ffLast << 1, ffImplicitCast = ffLast << 2 };
 static struct FExpr parse(struct LE *l, int lvl);
 
 enum { ttVoid, ttInt, ttFloat, ttStruct, ttPointer, ttFunPointer, ttArray };
@@ -265,6 +266,9 @@ static const char *printType(struct FType t) {
     r = printToMem("(array %i %s)", t.Data.Array.Size,
                    printType(*t.Data.Array.Pointee));
     break;
+  case ttStruct:
+    r = t.Data.Struct.S->Name;
+    break;
   default:
     assert(0); /* should never be reached */
   }
@@ -369,8 +373,10 @@ static struct FExpr convertType(struct FExpr e, struct FType want,
   return e;
 }
 
-static struct FExpr parseExplicitCast(struct FExpr e, struct FType want,
+static struct FExpr parseExplicitCast(struct FExpr have, struct FType want,
                                       struct LE *li) {
+  struct FExpr e;
+  e = have;
   want.Flags = e.Type.Flags;
   if (e.Type.Type == ttInt && want.Type == ttInt) {
     e.Type = want;
@@ -405,6 +411,41 @@ static struct FExpr parseExplicitCast(struct FExpr e, struct FType want,
     e.Type = want;
     e.Backend = castPtr(e.Backend, want.Backend);
     return e;
+  }
+  {
+    struct FFunction *f, *chosen;
+    struct FExpr fake;
+    fake.Backend = NULL;
+    chosen = NULL;
+    for (f = currentffunction; f; f = f->Last) {
+      if (f->Flags & ffExplicitCast) {
+        fake.Type = f->RetType;
+        if (!tryConvertType(e, f->Parms[0].Type, NULL) &&
+            !tryConvertType(fake, want, NULL)) {
+          if (chosen) {
+            /* TODO: better diagnostics: give information about implicit casts
+             * that are done and list all possiblities (not just two) */
+            compileHint(*li, "found an ambiguous explicit cast:");
+            compileHint(*li, " first function: %s", chosen->Name);
+            compileHint(*li, " second function: %s", f->Name);
+            compileError(*li, "ambiguous explicit cast (see above)");
+          }
+          chosen = f;
+        }
+      }
+    }
+    if (chosen) {
+      struct FExpr funval;
+      struct BIncompleteFuncall *call;
+      funval = have;
+      assert(!tryConvertType(funval, chosen->Parms[0].Type, &funval));
+      e.Type = chosen->RetType;
+      call = beginFuncall(chosen->Backend);
+      addArg(call, funval.Backend);
+      e.Backend = endFuncall(call);
+      assert(!tryConvertType(e, want, &e));
+      return e;
+    }
   }
   compileError(*li, "don't know how to explicitly cast %s to %s",
                printType(e.Type), printType(want));
@@ -810,6 +851,10 @@ static void parseDefun(struct LE *li, struct FScope *scope, int lvl,
         flags |= ffStatic;
       } else if (strcmp("inline", l->V.S) == 0) {
         flags |= ffInline;
+      } else if (strcmp("explicit-cast", l->V.S) == 0) {
+        flags |= ffExplicitCast;
+      } else if (strcmp("implicit-cast", l->V.S) == 0) {
+        flags |= ffImplicitCast;
       } else {
         compileError(*l, "unknown function property: \"%s\"", l->V.S);
       }

@@ -1,4 +1,4 @@
-all: test_llvm test_c
+all: test_llvm test_c chdrconv
 
 CC ?= gcc
 CXX ?= g++
@@ -21,6 +21,14 @@ test_c: main.o reader.o parser.o middle.o back_c.o
 test_llvm: main.o reader.o parser.o middle.o back_llvm.o
 	$(CXX) $^ -o $@ -lm -fno-rtti \
 		$(shell llvm-config --ldflags --system-libs --libs core) $(MODE)
+
+chdrconv.o: chdrconv.c
+	$(CC) -c -Wall -Wextra -pedantic -std=c99 \
+		-Wno-int-to-pointer-cast -Wno-pointer-to-int-cast $< -o $@ $(MODE) \
+		-I /usr/lib/llvm-3.9/include
+
+chdrconv: chdrconv.o
+	$(CC) $^ -o $@ $(MODE) -L /usr/lib/llvm-3.9/lib -lclang
 
 .PHONY: report clean
 report:
