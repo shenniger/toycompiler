@@ -47,6 +47,8 @@
 ;(defun isgreater ((float a b)) float (+ a b))
 
 
+(defun getStuff (((opaque-ptr Point) a)) (opaque-ptr Point) a)
+
 (struct Point ((i32 x y)))
 (struct Size ((i32 w h)))
 (defun (implicit-cast) cast-point-to-size ((Point p)) Size (
@@ -56,3 +58,6 @@
  r))
 (funproto use-size ((Size s)) void)
 (defun user ((Point p)) void (use-size p))
+
+(defun try (((opaque-ptr Point) a)) Size
+  (ptr-deref (getStuff a)))

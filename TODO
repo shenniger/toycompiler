@@ -33,13 +33,12 @@ TODO List: EigenesScheme
 [ ] Volatile
 [ ] Unreachability
 [ ] Sizeof
-[ ] Unknown Structs
+[X] Unknown Structs
 
 --- Advanced language features ---
 [ ] Closures
-[ ] Operator Overloading
-[X] Custom conversions
 [ ] Auto-Arg Closures
+[X] Custom conversions
 [X] Proper C Types and Chars
 
 --- Compile-time ---

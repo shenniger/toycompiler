@@ -8,7 +8,16 @@ enum { lvTop = 0x1, lvFun = 0x2, lvLoop = 0x4 };
 enum { ffExplicitCast = ffLast << 1, ffImplicitCast = ffLast << 2 };
 static struct FExpr parse(struct LE *l, int lvl);
 
-enum { ttVoid, ttInt, ttFloat, ttStruct, ttPointer, ttFunPointer, ttArray };
+enum {
+  ttVoid,
+  ttInt,
+  ttFloat,
+  ttStruct,
+  ttPointer,
+  ttFunPointer,
+  ttArray,
+  ttOpaque
+};
 
 struct FIntType {
   unsigned char IntSize; /* bytes */
@@ -36,6 +45,10 @@ struct FArrayType {
   int Size;
 };
 
+struct FOpaqueType {
+  struct FOpaque *O;
+};
+
 union FTypeData {
   struct FIntType Int;
   int FloatSize;
@@ -43,6 +56,7 @@ union FTypeData {
   struct FPtrType Ptr;
   struct FFunPtrType FunPtr;
   struct FArrayType Array;
+  struct FOpaqueType Opaque;
 };
 
 enum { tfConst = 0x1 };
@@ -148,6 +162,13 @@ struct FStruct {
   struct FStruct *Last;
 };
 
+struct FOpaque {
+  unsigned long HashedName;
+  const char *Name;
+  struct FType *T;
+  struct FOpaque *Last;
+};
+
 struct FGlobal {
   unsigned long HashedName;
   const char *Name;
@@ -164,6 +185,7 @@ static struct FTypeAlias *typealiases;
 static struct FFnAlias *fnaliases;
 static struct FStruct *structs;
 static struct FGlobal *globals;
+static struct FOpaque *opaques;
 
 static unsigned countLen(struct LE *l) {
   unsigned i;
@@ -244,6 +266,11 @@ static const char *printType(struct FType t) {
   case ttPointer: {
     switch (t.Data.Ptr.Type) {
     case ptRaw:
+      if (t.Data.Ptr.Pointee->Type == ttOpaque) {
+        r = printToMem("opaque-ptr %s",
+                       t.Data.Ptr.Pointee->Data.Opaque.O->Name);
+        break;
+      }
       r = printToMem("ptr %s", printType(*t.Data.Ptr.Pointee));
       break;
     case ptRef:
@@ -268,6 +295,9 @@ static const char *printType(struct FType t) {
     break;
   case ttStruct:
     r = t.Data.Struct.S->Name;
+    break;
+  case ttOpaque:
+    assert(0 && "opaque type alone can not be printed");
     break;
   default:
     assert(0); /* should never be reached */
@@ -311,8 +341,20 @@ static int typeEquals(struct FType a, struct FType b) {
   case ttArray:
     return a.Data.Array.Size == b.Data.Array.Size &&
            typeEquals(*a.Data.Array.Pointee, *b.Data.Array.Pointee);
+  case ttOpaque:
+    return a.Data.Opaque.O == b.Data.Opaque.O;
   }
   return 0; /* should never be reached */
+}
+
+static struct FType pointerTo(struct FType a) {
+  struct FType r;
+  r.Type = ttPointer;
+  r.Data.Ptr.Type = ptRaw;
+  r.Data.Ptr.Pointee = getMem(sizeof(struct FType));
+  *r.Data.Ptr.Pointee = a;
+  r.Backend = ptrType(a.Backend);
+  return r;
 }
 
 /* try to implicitly convert to a given type; fail if not possible */
@@ -330,6 +372,21 @@ static int tryConvertType(struct FExpr e, struct FType want, struct FExpr *r) {
       r->Backend = refof(e.Backend);
     }
     return 0;
+  }
+  if (e.Type.Type == ttPointer && e.Type.Data.Ptr.Type == ptRaw &&
+      e.Type.Data.Ptr.Pointee->Type == ttOpaque &&
+      e.Type.Data.Ptr.Pointee->Data.Opaque.O->T) {
+    return tryConvertType(
+        makeExpr(castPtr(e.Backend, ptrType(e.Type.Data.Ptr.Pointee->Data.Opaque
+                                                .O->T->Backend)),
+                 pointerTo(*e.Type.Data.Ptr.Pointee->Data.Opaque.O->T)),
+        want, r);
+  }
+  if (want.Type == ttPointer && want.Data.Ptr.Type == ptRaw &&
+      want.Data.Ptr.Pointee->Type == ttOpaque &&
+      want.Data.Ptr.Pointee->Data.Opaque.O->T) {
+    return tryConvertType(
+        e, pointerTo(*want.Data.Ptr.Pointee->Data.Opaque.O->T), r);
   }
   if (want.Type == ttInt && e.Type.Type == ttInt) {
     want.Flags = e.Type.Flags & want.Type;
@@ -536,14 +593,15 @@ enum {
   btVoid,
   btFunPtr,
   btArray,
-  btCType
+  btCType,
+  btOpaquePtr
 };
 struct BuiltinType {
   const char *Name;
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinType builtintypes[18];
+static struct BuiltinType builtintypes[19];
 
 void initParser() {
   unsigned i;
@@ -630,6 +688,7 @@ void initParser() {
   ADDTY("funptr", btFunPtr)
   ADDTY("array", btArray)
   ADDTY("c-type", btCType)
+  ADDTY("opaque-ptr", btOpaquePtr)
 
 #undef ADDTY
 
@@ -833,6 +892,41 @@ static struct FType parseType(struct LE *li, int waslist) {
     r.Data.Int.IntSize = size;
     r.Data.Int.Flags = flags;
   } break;
+  case btOpaquePtr: {
+    struct FOpaque *oq, *oqt;
+    struct FType *t;
+    unsigned long hash;
+    if (!waslist) {
+      compileError(*li, "\"opaque-ptr\" requires arguments");
+    }
+    hash = hashName(li->N->V.S);
+
+    oqt = NULL;
+    for (oq = opaques; oq; oq = oq->Last) {
+      if (oq->HashedName == hash && strcmp(oq->Name, li->N->V.S) == 0) {
+        oqt = oq;
+        break;
+      }
+    }
+    if (!oqt) {
+      struct FOpaque *old;
+      old = opaques;
+      opaques = getMem(sizeof(struct FOpaque));
+      opaques->Last = old;
+      opaques->HashedName = hash;
+      opaques->Name = li->N->V.S;
+      oqt = opaques;
+    }
+
+    t = getMem(sizeof(struct FType));
+    t->Type = ttOpaque;
+    t->Data.Opaque.O = oqt;
+    r.Type = ttPointer;
+    r.Data.Ptr.Type = ptRaw;
+    r.Data.Ptr.Pointee = t;
+    r.Backend = ptrType(voidType());
+    return r;
+  }
   case btVoid:
     return voidExpr().Type;
   case btNoBuiltin: /* (fallthrough intended) */
@@ -901,6 +995,7 @@ static void parseDefun(struct LE *li, struct FScope *scope, int lvl,
   fn->Parent = currentffunction;
   fn->RetType = parseType(li->N->N, 0);
   fn->Flags = flags;
+  /* TODO: check functions which are casts */
   beginFnPrototype(li->V.S, fn->RetType.Backend, flags);
   for (l = li->N->V.L; l; l = l->N) {
     for (list = l->V.L->N; list; list = list->N) {
@@ -1045,7 +1140,6 @@ static struct FExpr parseArm(struct LE *li, const char *op) {
 static struct FExpr parseCmp(const char *op, struct FExpr a, struct FExpr b,
                              struct LE *l) {
   struct FExpr r;
-  /* TODO: POINTERS!!! */
   r.Type.Type = ttInt;
   r.Type.AliasUsed = NULL;
   r.Type.Flags = 0;
@@ -1327,18 +1421,33 @@ fnAlias : {
 }
 typeAlias : {
   struct FTypeAlias *b;
+  struct FOpaque *oq;
   b = getMem(sizeof(struct FTypeAlias));
   b->HashedName = hash;
   b->Name = li->V.S;
   b->T = parseType(li->N, 0);
   b->Last = typealiases;
   typealiases = b;
+  for (oq = opaques; oq; oq = oq->Last) {
+    if (oq->HashedName == b->HashedName && strcmp(oq->Name, b->Name) == 0) {
+      if (oq->T) {
+        compileError(*li, "opaque type \"%s\" has already been cleared",
+                     b->Name);
+        /* TODO: Language? "been cleared"? */
+      }
+      oq->T = getMem(sizeof(struct FType));
+      *oq->T = b->T;
+      oq->T->AliasUsed = b;
+      break;
+    }
+  }
 }
 }
 
 static void parseStruct(struct LE *li) {
   struct FStruct *st;
   struct LE *l, *list;
+  struct FOpaque *oq;
   unsigned i;
   st = getMem(sizeof(struct FStruct));
   st->Name = li->V.S;
@@ -1365,6 +1474,20 @@ static void parseStruct(struct LE *li) {
   endStruct(st->Backend);
   st->Last = structs;
   structs = st;
+  for (oq = opaques; oq; oq = oq->Last) {
+    if (oq->HashedName == st->HashedName && strcmp(oq->Name, st->Name) == 0) {
+      if (oq->T) {
+        compileError(*li, "opaque type \"%s\" has already been cleared",
+                     oq->Name);
+        /* TODO: Language? "been cleared"? */
+      }
+      oq->T = getMem(sizeof(struct FType));
+      oq->T->Type = ttStruct;
+      oq->T->Backend = structType(st->Backend);
+      oq->T->Data.Struct.S = st;
+      break;
+    }
+  }
 }
 static struct FExpr parseMemb(struct LE *li, struct FExpr st, struct LE *stli,
                               int lvl) {
@@ -1681,8 +1804,22 @@ static struct FExpr parse(struct LE *l, int lvl) {
         if (a.Type.Data.Ptr.Type != ptRaw) {
           compileError(*li->N, "cannot \"deref\" non-raw pointer");
         }
-        a.Backend = derefPtr(a.Backend);
-        a.Type = *a.Type.Data.Ptr.Pointee;
+        if (a.Type.Data.Ptr.Pointee &&
+            a.Type.Data.Ptr.Pointee->Type == ttOpaque) {
+          struct FOpaque *oq;
+          oq = a.Type.Data.Ptr.Pointee->Data.Opaque.O;
+          if (!oq->T) {
+            compileError(
+                *li->N,
+                "cannot \"deref\" opaque pointer \"%s\" because it is unknown",
+                oq->Name);
+          }
+          a.Type = *oq->T;
+          a.Backend = derefPtr(castPtr(a.Backend, ptrType(oq->T->Backend)));
+        } else {
+          a.Backend = derefPtr(a.Backend);
+          a.Type = *a.Type.Data.Ptr.Pointee;
+        }
         return a;
       }
       case bcMemb:
