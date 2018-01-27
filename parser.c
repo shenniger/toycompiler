@@ -29,9 +29,10 @@ struct FStructType {
 };
 
 enum { ptRaw = 1, ptRef };
+enum { pfVolatile = 0x1 };
 struct FPtrType {
   struct FType *Pointee;
-  int Type;
+  int Type, Flags;
 };
 
 struct FFunPtrType {
@@ -82,11 +83,14 @@ struct FParm {
   struct LE *L; /* stupid hack; ignore! */
 };
 
+enum { vfVolatile = 0x1 };
+
 struct FVar {
   unsigned long HashedName;
   const char *Name;
   struct BVar *Backend;
   struct FType Type;
+  int Flags;
 
   struct FVar *Next;
 };
@@ -267,14 +271,19 @@ static const char *printType(struct FType t) {
     switch (t.Data.Ptr.Type) {
     case ptRaw:
       if (t.Data.Ptr.Pointee->Type == ttOpaque) {
-        r = printToMem("opaque-ptr %s",
+        r = printToMem("%sopaque-ptr %s",
+                       t.Data.Ptr.Flags & pfVolatile ? "volatile-" : "",
                        t.Data.Ptr.Pointee->Data.Opaque.O->Name);
         break;
       }
-      r = printToMem("ptr %s", printType(*t.Data.Ptr.Pointee));
+      r = printToMem("%sptr %s",
+                     t.Data.Ptr.Flags & pfVolatile ? "volatile-" : "",
+                     printType(*t.Data.Ptr.Pointee));
       break;
     case ptRef:
-      r = printToMem("ref %s", printType(*t.Data.Ptr.Pointee));
+      r = printToMem("%sref %s",
+                     t.Data.Ptr.Flags & pfVolatile ? "volatile-" : "",
+                     printType(*t.Data.Ptr.Pointee));
       break;
     default:
       assert(0); /* hopefully never reached */
@@ -324,6 +333,7 @@ static int typeEquals(struct FType a, struct FType b) {
     return a.Data.Struct.S == b.Data.Struct.S;
   case ttPointer:
     return a.Data.Ptr.Type == b.Data.Ptr.Type &&
+           a.Data.Ptr.Flags == b.Data.Ptr.Flags &&
            typeEquals(*a.Data.Ptr.Pointee, *b.Data.Ptr.Pointee);
   case ttFunPointer: {
     int i;
@@ -347,13 +357,13 @@ static int typeEquals(struct FType a, struct FType b) {
   return 0; /* should never be reached */
 }
 
-static struct FType pointerTo(struct FType a) {
+static struct FType pointerTo(struct FType a, int isvolatile) {
   struct FType r;
   r.Type = ttPointer;
   r.Data.Ptr.Type = ptRaw;
   r.Data.Ptr.Pointee = getMem(sizeof(struct FType));
   *r.Data.Ptr.Pointee = a;
-  r.Backend = ptrType(a.Backend);
+  r.Backend = ptrType(a.Backend, isvolatile);
   return r;
 }
 
@@ -377,16 +387,20 @@ static int tryConvertType(struct FExpr e, struct FType want, struct FExpr *r) {
       e.Type.Data.Ptr.Pointee->Type == ttOpaque &&
       e.Type.Data.Ptr.Pointee->Data.Opaque.O->T) {
     return tryConvertType(
-        makeExpr(castPtr(e.Backend, ptrType(e.Type.Data.Ptr.Pointee->Data.Opaque
-                                                .O->T->Backend)),
-                 pointerTo(*e.Type.Data.Ptr.Pointee->Data.Opaque.O->T)),
+        makeExpr(
+            castPtr(e.Backend,
+                    ptrType(e.Type.Data.Ptr.Pointee->Data.Opaque.O->T->Backend,
+                            e.Type.Data.Ptr.Flags & pfVolatile)),
+            pointerTo(*e.Type.Data.Ptr.Pointee->Data.Opaque.O->T,
+                      e.Type.Data.Ptr.Flags & pfVolatile)),
         want, r);
   }
   if (want.Type == ttPointer && want.Data.Ptr.Type == ptRaw &&
       want.Data.Ptr.Pointee->Type == ttOpaque &&
       want.Data.Ptr.Pointee->Data.Opaque.O->T) {
-    return tryConvertType(
-        e, pointerTo(*want.Data.Ptr.Pointee->Data.Opaque.O->T), r);
+    return tryConvertType(e, pointerTo(*want.Data.Ptr.Pointee->Data.Opaque.O->T,
+                                       want.Data.Ptr.Flags & pfVolatile),
+                          r);
   }
   if (want.Type == ttInt && e.Type.Type == ttInt) {
     want.Flags = e.Type.Flags & want.Type;
@@ -594,14 +608,17 @@ enum {
   btFunPtr,
   btArray,
   btCType,
-  btOpaquePtr
+  btOpaquePtr,
+  btVolatileOpaquePtr,
+  btVolatilePtr,
+  btVolatileRef
 };
 struct BuiltinType {
   const char *Name;
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinType builtintypes[19];
+static struct BuiltinType builtintypes[22];
 
 void initParser() {
   unsigned i;
@@ -689,6 +706,9 @@ void initParser() {
   ADDTY("array", btArray)
   ADDTY("c-type", btCType)
   ADDTY("opaque-ptr", btOpaquePtr)
+  ADDTY("volatile-opaque-ptr", btVolatileOpaquePtr)
+  ADDTY("volatile-ptr", btVolatilePtr)
+  ADDTY("volatile-ref", btVolatileRef)
 
 #undef ADDTY
 
@@ -726,6 +746,7 @@ static struct FType parseType(struct LE *li, int waslist) {
   int builtincode;
   unsigned long hash;
   struct FType r;
+  memset(&r, 0, sizeof(struct FType));
   r.Flags = 0;
   r.AliasUsed = NULL;
   if (li->T == tyList) {
@@ -805,7 +826,19 @@ static struct FType parseType(struct LE *li, int waslist) {
     } else {
       *r.Data.Ptr.Pointee = voidExpr().Type;
     }
-    r.Backend = ptrType(r.Data.Ptr.Pointee->Backend);
+    r.Backend = ptrType(r.Data.Ptr.Pointee->Backend, 0);
+    break;
+  case btVolatilePtr:
+    r.Type = ttPointer;
+    r.Data.Ptr.Type = ptRaw;
+    r.Data.Ptr.Flags = pfVolatile;
+    r.Data.Ptr.Pointee = getMem(sizeof(struct FType));
+    if (waslist) {
+      *r.Data.Ptr.Pointee = parseType(li->N, 1);
+    } else {
+      *r.Data.Ptr.Pointee = voidExpr().Type;
+    }
+    r.Backend = ptrType(r.Data.Ptr.Pointee->Backend, 1);
     break;
   case btRef:
     if (!waslist) {
@@ -815,7 +848,18 @@ static struct FType parseType(struct LE *li, int waslist) {
     r.Data.Ptr.Type = ptRef;
     r.Data.Ptr.Pointee = getMem(sizeof(struct FType));
     *r.Data.Ptr.Pointee = parseType(li->N, 1);
-    r.Backend = ptrType(r.Data.Ptr.Pointee->Backend);
+    r.Backend = ptrType(r.Data.Ptr.Pointee->Backend, 0);
+    break;
+  case btVolatileRef:
+    if (!waslist) {
+      compileError(*li, "\"ref\" requires arguments");
+    }
+    r.Type = ttPointer;
+    r.Data.Ptr.Type = ptRef;
+    r.Data.Ptr.Flags = pfVolatile;
+    r.Data.Ptr.Pointee = getMem(sizeof(struct FType));
+    *r.Data.Ptr.Pointee = parseType(li->N, 1);
+    r.Backend = ptrType(r.Data.Ptr.Pointee->Backend, 1);
     break;
   case btFunPtr: {
     struct LE *l;
@@ -892,7 +936,8 @@ static struct FType parseType(struct LE *li, int waslist) {
     r.Data.Int.IntSize = size;
     r.Data.Int.Flags = flags;
   } break;
-  case btOpaquePtr: {
+  case btOpaquePtr:
+  case btVolatileOpaquePtr: {
     struct FOpaque *oq, *oqt;
     struct FType *t;
     unsigned long hash;
@@ -923,8 +968,11 @@ static struct FType parseType(struct LE *li, int waslist) {
     t->Data.Opaque.O = oqt;
     r.Type = ttPointer;
     r.Data.Ptr.Type = ptRaw;
+    if (builtincode == btVolatileOpaquePtr) {
+      r.Data.Ptr.Flags = pfVolatile;
+    }
     r.Data.Ptr.Pointee = t;
-    r.Backend = ptrType(voidType());
+    r.Backend = ptrType(voidType(), r.Data.Ptr.Flags & pfVolatile);
     return r;
   }
   case btVoid:
@@ -1522,7 +1570,7 @@ static struct FExpr parseMemb(struct LE *li, struct FExpr st, struct LE *stli,
 
 static struct FExpr handleRef(struct FExpr e) {
   if (e.Type.Type == ttPointer && e.Type.Data.Ptr.Type == ptRef) {
-    e.Backend = derefPtr(e.Backend);
+    e.Backend = derefPtr(e.Backend, e.Type.Data.Ptr.Flags & pfVolatile);
     e.Type = *e.Type.Data.Ptr.Pointee;
   } else if (e.Type.Type == ttArray) {
     struct FType t;
@@ -1531,7 +1579,8 @@ static struct FExpr handleRef(struct FExpr e) {
     t.Type = ttPointer;
     t.Data.Ptr.Type = ptRaw;
     t.Data.Ptr.Pointee = e.Type.Data.Array.Pointee;
-    t.Backend = ptrType(t.Data.Ptr.Pointee->Backend);
+    t.Backend = ptrType(t.Data.Ptr.Pointee->Backend,
+                        0 /* TODO: correctly handle volatile arrays */);
     /* TODO: prevent user from setting that */
     return makeExpr(pointerToArray(e.Backend), t);
   }
@@ -1570,10 +1619,15 @@ static void parseGlobal(struct LE *l) {
   struct FGlobal *gl;
   flags = 0;
   if (l->T == tyList) {
-    if (strcmp(l->V.L->V.S, "extern") == 0) {
-      flags |= gfExtern;
-    } else if (strcmp(l->V.L->V.S, "static") == 0) {
-      flags |= gfStatic;
+    struct LE *li;
+    for (li = l->V.L; li; li = li->N) {
+      if (strcmp(li->V.S, "extern") == 0) {
+        flags |= gfExtern;
+      } else if (strcmp(li->V.S, "static") == 0) {
+        flags |= gfStatic;
+      } else if (strcmp(li->V.S, "volatile") == 0) {
+        flags |= gfVolatile;
+      }
     }
     l = l->N;
   }
@@ -1638,20 +1692,23 @@ static struct FExpr parse(struct LE *l, int lvl) {
     for (s = curscope; s; s = s->Parent) {
       for (v = s->Vars; v; v = v->Next) {
         if (v->HashedName == hash && strcmp(v->Name, l->V.S) == 0) {
-          return handleRef(makeExpr(varUsage(v->Backend), v->Type));
+          return handleRef(
+              makeExpr(varUsage(v->Backend, v->Flags & vfVolatile), v->Type));
         }
       }
     }
     for (i = 0; i < currentffunction->NParms; ++i) {
       if (currentffunction->Parms[i].HashedName == hash &&
           strcmp(currentffunction->Parms[i].Name, l->V.S) == 0) {
-        return handleRef(makeExpr(varUsage(currentffunction->Parms[i].Backend),
-                                  currentffunction->Parms[i].Type));
+        return handleRef(
+            makeExpr(varUsage(currentffunction->Parms[i].Backend, 0),
+                     currentffunction->Parms[i].Type));
       }
     }
     for (gl = globals; gl; gl = gl->Last) {
       if (gl->HashedName == hash && strcmp(gl->Name, l->V.S) == 0) {
-        return handleRef(makeExpr(varUsage(gl->Backend), gl->Type));
+        return handleRef(
+            makeExpr(varUsage(gl->Backend, gl->Flags & gfVolatile), gl->Type));
       }
     }
     fn = findSimpleFunction(l->V.S, hashName(l->V.S), curscope, l);
@@ -1712,34 +1769,49 @@ static struct FExpr parse(struct LE *l, int lvl) {
       }
       case bcTODO_Var: {
         struct FVar *last;
+        int flags;
+        if (li->N->N->T == tyList) {
+          /* TODO: this is a syntactic irregularity */
+          struct LE *l;
+          for (l = li->N->N->V.L; l; l = l->N) {
+            if (strcmp("volatile", l->V.S) == 0) {
+              flags = vfVolatile;
+            }
+          }
+          li->N->N = li->N->N->N;
+        }
         last = curscope->Vars;
         curscope->Vars = getMem(sizeof(struct FVar));
         curscope->Vars->Next = last;
         curscope->Vars->Type = parseType(li->N, 0);
         curscope->Vars->Name = li->N->N->V.S;
         curscope->Vars->HashedName = hashName(li->N->N->V.S);
-        curscope->Vars->Backend =
-            addVariable(li->N->N->V.S, curscope->Vars->Type.Backend);
+        curscope->Vars->Flags = flags;
+        curscope->Vars->Backend = addVariable(
+            li->N->N->V.S, curscope->Vars->Type.Backend, flags & vfVolatile);
         if (curscope->Vars->Type.Type == ttPointer &&
             curscope->Vars->Type.Data.Ptr.Type == ptRef) {
-          /* TODO */
+          /* TODO: PROPER TYPE CHECKING; SOLVE THIS ENTIRE THING BETTER!!! */
           struct FType t;
           t = curscope->Vars->Type;
           t.Data.Ptr.Type = ptRaw;
           addEvaluation(setVar(
-              varUsage(curscope->Vars->Backend),
+              varUsage(curscope->Vars->Backend, flags & vfVolatile),
               convertType(parse(li->N->N->N, lvl), t, li->N->N->N).Backend));
-          return makeExpr(derefPtr(varUsage(curscope->Vars->Backend)),
-                          *curscope->Vars->Type.Data.Ptr.Pointee);
+          return makeExpr(
+              derefPtr(varUsage(curscope->Vars->Backend, flags & vfVolatile),
+                       curscope->Vars->Type.Data.Ptr.Flags & pfVolatile),
+              *curscope->Vars->Type.Data.Ptr.Pointee);
         }
         if (li->N->N->N) {
           /* for constant variables */
-          addEvaluation(setVar(varUsage(curscope->Vars->Backend),
-                               convertType(parse(li->N->N->N, lvl),
-                                           curscope->Vars->Type, li->N->N->N)
-                                   .Backend));
+          addEvaluation(
+              setVar(varUsage(curscope->Vars->Backend, flags & vfVolatile),
+                     convertType(parse(li->N->N->N, lvl), curscope->Vars->Type,
+                                 li->N->N->N)
+                         .Backend));
         }
-        return makeExpr(varUsage(curscope->Vars->Backend),
+        return makeExpr(varUsage(curscope->Vars->Backend, flags & vfVolatile),
                         curscope->Vars->Type);
       }
       case bcArm:
@@ -1799,25 +1871,27 @@ static struct FExpr parse(struct LE *l, int lvl) {
         struct FExpr a;
         a = parse(li->N, lvl);
         if (a.Type.Type != ttPointer) {
-          compileError(*li->N, "\"deref\" used on non-pointer");
+          compileError(*li->N, "\"ptr-deref\" used on non-pointer");
         }
         if (a.Type.Data.Ptr.Type != ptRaw) {
-          compileError(*li->N, "cannot \"deref\" non-raw pointer");
+          compileError(*li->N, "cannot \"ptr-deref\" non-raw pointer");
         }
         if (a.Type.Data.Ptr.Pointee &&
             a.Type.Data.Ptr.Pointee->Type == ttOpaque) {
           struct FOpaque *oq;
           oq = a.Type.Data.Ptr.Pointee->Data.Opaque.O;
           if (!oq->T) {
-            compileError(
-                *li->N,
-                "cannot \"deref\" opaque pointer \"%s\" because it is unknown",
-                oq->Name);
+            compileError(*li->N, "cannot \"ptr-deref\" opaque pointer \"%s\" "
+                                 "because it is unknown",
+                         oq->Name);
           }
           a.Type = *oq->T;
-          a.Backend = derefPtr(castPtr(a.Backend, ptrType(oq->T->Backend)));
+          a.Backend = derefPtr(
+              castPtr(a.Backend, ptrType(oq->T->Backend,
+                                         a.Type.Data.Ptr.Flags & pfVolatile)),
+              a.Type.Data.Ptr.Flags & pfVolatile);
         } else {
-          a.Backend = derefPtr(a.Backend);
+          a.Backend = derefPtr(a.Backend, a.Type.Data.Ptr.Flags & pfVolatile);
           a.Type = *a.Type.Data.Ptr.Pointee;
         }
         return a;

@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
   /* preamble */
   printf(PREAMBLE, argv[1]);
 
-  /* collect all interesting structs */
+  /* collect all interesting stuff */
   clang_visitChildren(cursor, &visitor, NULL);
 
   clang_disposeTranslationUnit(unit);

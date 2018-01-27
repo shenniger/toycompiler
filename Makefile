@@ -12,8 +12,7 @@ MODE ?= -g -O0
 back_llvm.o: back_llvm.cpp prg.h 
 	$(CXX) -c -Wall -Wextra -pedantic -std=c++14 -o back_llvm.o back_llvm.cpp \
 		$(shell llvm-config --cxxflags --system-libs --libs core) $(MODE) \
-		-Wno-int-to-pointer-cast -fno-rtti \
-#		-Wno-return-type # temporary measure. REMOVE THIS WHEN back_llvm is finished!
+		-Wno-int-to-pointer-cast -fno-rtti
 
 test_c: main.o reader.o parser.o middle.o back_c.o
 	$(CC) $^ -o $@ -lm $(MODE)

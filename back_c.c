@@ -191,8 +191,9 @@ void constType(struct BType *t) {
   (void)t;
   /*t->A = printToMem("const %s", t->A);*/ /* TODO */
 }
-struct BType *ptrType(struct BType *t) {
-  return makeSimpleType(printToMem("%s*", t->A));
+struct BType *ptrType(struct BType *t, int isvolatile) {
+  return makeSimpleType(
+      printToMem("%s%s*", t->A, isvolatile ? "volatile " : ""));
 }
 struct BType *fnPtrType(struct BType *rettype, int nparms,
                         struct BType **parms) {
@@ -219,7 +220,8 @@ struct BExpr *pointerToArray(struct BExpr *r) {
   return r;
 }
 
-struct BExpr *derefPtr(struct BExpr *e) {
+struct BExpr *derefPtr(struct BExpr *e, int isvolatileptr) {
+  (void)isvolatileptr;
   e->A = printToMem("*(%s)", e->A);
   return e;
 }
@@ -376,11 +378,13 @@ void endFnBody(struct BExpr *e) {
   curfn = curfn->Parent;
 }
 
-struct BVar *addVariable(const char *name, struct BType *type) {
+struct BVar *addVariable(const char *name, struct BType *type, int isvolatile) {
   struct BVar *a;
   a = getMem(sizeof(struct BVar));
   a->Name = name;
-  appendString(&curfn->Var, printToMem("  %s %s;", type->A, name));
+  appendString(
+      &curfn->Var,
+      printToMem("  %s%s %s;", isvolatile ? "volatile " : "", type->A, name));
   return a;
 }
 struct BVar *addParameter(const char *name, struct BType *type) {
@@ -397,12 +401,13 @@ struct BVar *addGlobal(const char *name, struct BType *t, int flags) {
   struct BVar *a;
   a = getMem(sizeof(struct BVar));
   a->Name = name;
-  printf("%s%s %s;\n",
+  printf("%s%s%s %s;\n",
          flags & gfExtern ? "extern " : (flags & gfStatic ? "static " : ""),
-         t->A, name);
+         flags & gfVolatile ? "volatile " : "", t->A, name);
   return a;
 }
-struct BExpr *varUsage(struct BVar *p) {
+struct BExpr *varUsage(struct BVar *p, int isvolatilevar) {
+  (void)isvolatilevar;
   return makeSimpleExpr(p->Name, NULLSTR, NULLSTR, efNonSelfSufficient);
 }
 

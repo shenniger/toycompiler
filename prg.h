@@ -68,9 +68,9 @@ struct IType *getStructMemberType(struct IStructMemberIt *it);
 struct BFunction;   /* silences compiler warning */
 struct BType;       /* silences compiler warning */
 struct BStructType; /* silences compiler warning */
-enum { ifSigned = 0x1, ifCType = 0x2, ifChar = 0x4 };  /* int flags */
-enum { ffStatic = 0x1, ffInline = 0x2, ffLast = 0x4 }; /* function flags */
-enum { gfStatic = 0x1, gfExtern = 0x2 };               /* globals flags */
+enum { ifSigned = 0x1, ifCType = 0x2, ifChar = 0x4 };      /* int flags */
+enum { ffStatic = 0x1, ffInline = 0x2, ffLast = 0x4 };     /* function flags */
+enum { gfStatic = 0x1, gfExtern = 0x2, gfVolatile = 0x4 }; /* globals flags */
 
 void initCodegen();
 void finalizeCodegen();
@@ -87,7 +87,7 @@ struct BType *voidType();
 struct BType *intType(int flags, int size); /* size in bytes */
 struct BType *floatType(int size);          /* size in bytes */
 struct BType *structType(struct BStruct *st);
-struct BType *ptrType(struct BType *t);
+struct BType *ptrType(struct BType *t, int isvolatile);
 struct BType *fnPtrType(struct BType *rettype, int nparms,
                         struct BType **parms);
 struct BType *arrayType(struct BType *t, int size);
@@ -96,7 +96,7 @@ struct BExpr *pointerToArray(struct BExpr *r);
 
 void constType(struct BType *t);
 
-struct BExpr *derefPtr(struct BExpr *e);
+struct BExpr *derefPtr(struct BExpr *e, int isvolatileptr);
 struct BExpr *refof(struct BExpr *e);
 struct BExpr *fnRefof(struct BFunction *f);
 
@@ -126,12 +126,12 @@ void beginFnPrototype(const char *name, struct BType *rettype, int flags);
 struct BFunction *endFnPrototype(int addBody);
 void endFnBody(struct BExpr *e);
 
-struct BVar *addVariable(const char *name, struct BType *t);
+struct BVar *addVariable(const char *name, struct BType *t, int isvolatile);
 struct BVar *addParameter(const char *name, struct BType *t);
 struct BVar *updateParameter(struct BVar *v);
 struct BVar *addGlobal(const char *name, struct BType *t, int flags);
 
-struct BExpr *varUsage(struct BVar *p);
+struct BExpr *varUsage(struct BVar *p, int isvolatilevar);
 struct BExpr *setVar(struct BExpr *lhs,
                      struct BExpr *rhs); /* TODO: dangerous (see impl) */
 

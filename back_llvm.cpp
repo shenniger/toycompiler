@@ -36,7 +36,7 @@ static Singleton *llvmdata;
 
 void initCodegen() { llvmdata = new Singleton; }
 void finalizeCodegen() {
-  llvmdata->M->print(llvm::errs(), nullptr);
+  llvmdata->M->print(llvm::outs(), nullptr);
   delete llvmdata;
 }
 
@@ -85,8 +85,9 @@ struct BExpr *structMemb(struct BExpr *st, struct BStruct *type,
     l = cast<LoadInst>(l)->getPointerOperand();
     static_cast<LoadInst *>(old)->eraseFromParent();
   }
-  return derefPtr(toExpr(static_cast<Value *>(
-      llvmdata->B.CreateStructGEP(NULL, l, n - 1, "structmemb"))));
+  return derefPtr(toExpr(static_cast<Value *>(llvmdata->B.CreateStructGEP(
+                      NULL, l, n - 1, "structmemb"))),
+                  0);
 }
 
 struct BExpr *intLiteral(int val) {
@@ -146,7 +147,13 @@ struct BType *structType(struct BStruct *st) {
 void constType(struct BType *t) {
   (void)t; /* LLVM does not care about constness */
 }
-struct BType *ptrType(struct BType *t) {
+struct BType *ptrType(struct BType *t, int isvolatile) {
+  (void)isvolatile;
+  if (fromType(t)->isVoidTy()) {
+    /* LLVM does not like void pointers */
+    return toType(static_cast<Type *>(PointerType::getUnqual(
+        static_cast<Type *>(Type::getInt8Ty(llvmdata->C)))));
+  }
   return toType(static_cast<Type *>(PointerType::getUnqual(fromType(t))));
 }
 struct BType *fnPtrType(struct BType *rettype, int nparms,
@@ -173,8 +180,8 @@ struct BExpr *pointerToArray(struct BExpr *r) {
       llvmdata->B.CreateInBoundsGEP(fromExpr(r), idxlist, "arraygep")));
 }
 
-struct BExpr *derefPtr(struct BExpr *e) {
-  return toExpr(llvmdata->B.CreateLoad(fromExpr(e), "loadtmp"));
+struct BExpr *derefPtr(struct BExpr *e, int isvolatileptr) {
+  return toExpr(llvmdata->B.CreateLoad(fromExpr(e), isvolatileptr, "loadtmp"));
 }
 struct BExpr *refof(struct BExpr *e) {
   return e; /* not necessary in LLVM */
@@ -335,7 +342,7 @@ void endFnBody(struct BExpr *e) {
   verifyFunction(*curfn->F, &llvm::errs());
 }
 
-struct BVar *addVariable(const char *name, struct BType *type) {
+struct BVar *addVariable(const char *name, struct BType *type, int) {
   IRBuilder<> b(&curfn->F->getEntryBlock(), curfn->F->getEntryBlock().begin());
   return toVar(b.CreateAlloca(fromType(type), 0, name));
 }
@@ -362,23 +369,25 @@ struct BVar *addGlobal(const char *name, struct BType *t, int flags) {
   (void)flags;          /* TODO: flags */
   return toVar(global); /* TODO: alignment */
 }
-struct BExpr *varUsage(struct BVar *p) {
+struct BExpr *varUsage(struct BVar *p, int isvolatilevar) {
   Value *v = fromVar(p);
   if (isa<AllocaInst>(v)) {
-    return toExpr(llvmdata->B.CreateLoad(v, "varusage"));
+    return toExpr(llvmdata->B.CreateLoad(v, isvolatilevar, "varusage"));
   }
   return toExpr(v);
 }
 
 struct BExpr *setVar(struct BExpr *lhs, struct BExpr *rhs) {
   Value *l = fromExpr(lhs);
+  int isvolatile = 0;
   if (isa<LoadInst>(l)) {
     /* TODO: this is a terrible workaround, solve better */
     Value *old = l;
+    isvolatile = cast<LoadInst>(l)->isVolatile();
     l = cast<LoadInst>(l)->getPointerOperand();
     static_cast<LoadInst *>(old)->eraseFromParent();
   }
-  llvmdata->B.CreateStore(fromExpr(rhs), l);
+  llvmdata->B.CreateStore(fromExpr(rhs), l, isvolatile);
   return lhs;
 }
 
