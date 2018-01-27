@@ -46,6 +46,9 @@
 ;(defun get-y ((A a)) float (memb a y))
 ;(defun isgreater ((float a b)) float (+ a b))
 
+(constant abc 10)
+(constant def 32)
+
 (defun getStuff (((opaque-ptr Point) a)) (opaque-ptr Point) a)
 
 (struct Point ((i32 x y)))
@@ -64,3 +67,5 @@
 (global (volatile static) a (i32))
 (defun set-a ((i32 g)) void (set a g))
 (defun nonneg ((Point a)) i32 (if (< (memb a x) 0) (memb a y) (memb a x)))
+
+(defun get () i32 (+ abc def))

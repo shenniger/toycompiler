@@ -34,7 +34,7 @@ TODO List: EigenesScheme
 [ ] Unreachability
 [ ] Sizeof
 [X] Unknown Structs
-[ ] Enums
+[X] Enums
 
 --- Advanced language features ---
 [ ] Closures

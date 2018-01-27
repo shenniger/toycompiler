@@ -182,6 +182,13 @@ struct FGlobal {
   struct FGlobal *Last;
 };
 
+struct FConstant {
+  unsigned long HashedName;
+  const char *Name;
+  unsigned long long Value;
+  struct FConstant *Last;
+};
+
 static struct FFunction *functions;
 static struct FFunction *currentffunction;
 static struct FScope *curscope;
@@ -190,6 +197,7 @@ static struct FFnAlias *fnaliases;
 static struct FStruct *structs;
 static struct FGlobal *globals;
 static struct FOpaque *opaques;
+static struct FConstant *constants;
 
 static unsigned countLen(struct LE *l) {
   unsigned i;
@@ -578,6 +586,7 @@ enum {
   bcPtrRefof,
   bcFuncall,
   bcGlobal,
+  bcConstant,
   bcTODO_Set,
   bcTODO_Var
 };
@@ -586,7 +595,7 @@ struct BuiltinCommand {
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinCommand builtincommands[35];
+static struct BuiltinCommand builtincommands[36];
 
 enum {
   btNoBuiltin,
@@ -664,6 +673,7 @@ void initParser() {
   ADDCMD("ptrto", bcPtrRefof)
   ADDCMD("ptr-deref", bcPtrDeref)
   ADDCMD("funcall", bcFuncall)
+  ADDCMD("constant", bcConstant)
   ADDCMD("set", bcTODO_Set)
   ADDCMD("var", bcTODO_Var)
 
@@ -1687,6 +1697,7 @@ static struct FExpr parse(struct LE *l, int lvl) {
     struct FGlobal *gl;
     struct FFunction *fn;
     struct BType **parms;
+    struct FConstant *c;
     struct FType t;
     hash = hashName(l->V.S);
     for (s = curscope; s; s = s->Parent) {
@@ -1709,6 +1720,18 @@ static struct FExpr parse(struct LE *l, int lvl) {
       if (gl->HashedName == hash && strcmp(gl->Name, l->V.S) == 0) {
         return handleRef(
             makeExpr(varUsage(gl->Backend, gl->Flags & gfVolatile), gl->Type));
+      }
+    }
+    for (c = constants; c; c = c->Last) {
+      if (c->HashedName == hash && strcmp(c->Name, l->V.S) == 0) {
+        struct FType t;
+        t.Type = ttInt;
+        t.AliasUsed = NULL;
+        t.Flags = 0;
+        t.Data.Int.IntSize = 4;
+        t.Data.Int.Flags = ifSigned;
+        t.Backend = intType(ifSigned, 4);
+        return makeExpr(intLiteral(c->Value), t);
       }
     }
     fn = findSimpleFunction(l->V.S, hashName(l->V.S), curscope, l);
@@ -1757,6 +1780,17 @@ static struct FExpr parse(struct LE *l, int lvl) {
       case bcCast:
         /* TODO: error */
         return parseExplicitCast(parse(li->N->N, lvl), parseType(li->N, 0), li);
+      case bcConstant: {
+        /* TODO: error */
+        struct FConstant *c;
+        c = constants;
+        constants = getMem(sizeof(struct FConstant));
+        constants->Last = c;
+        constants->HashedName = hashName(li->N->V.S);
+        constants->Name = li->N->V.S;
+        constants->Value = li->N->N->V.I;
+        break;
+      }
       case bcTODO_Set: {
         struct FExpr lhs, rhs;
         lhs = parse(li->N, lvl);
