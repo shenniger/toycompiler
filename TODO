@@ -29,10 +29,9 @@ TODO List: EigenesScheme
 [ ] VA Args
 [ ] Array Initializers
 [ ] Unions
-[ ] Bitsets
 [X] Volatile
-[ ] Unreachability
-[ ] Sizeof
+[X] Unreachability
+[X] Sizeof
 [X] Unknown Structs
 [X] Enums
 

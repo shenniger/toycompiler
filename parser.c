@@ -587,6 +587,7 @@ enum {
   bcFuncall,
   bcGlobal,
   bcConstant,
+  bcSizeof,
   bcTODO_Set,
   bcTODO_Var
 };
@@ -595,7 +596,7 @@ struct BuiltinCommand {
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinCommand builtincommands[36];
+static struct BuiltinCommand builtincommands[37];
 
 enum {
   btNoBuiltin,
@@ -674,6 +675,7 @@ void initParser() {
   ADDCMD("ptr-deref", bcPtrDeref)
   ADDCMD("funcall", bcFuncall)
   ADDCMD("constant", bcConstant)
+  ADDCMD("sizeof", bcSizeof)
   ADDCMD("set", bcTODO_Set)
   ADDCMD("var", bcTODO_Var)
 
@@ -1041,6 +1043,8 @@ static void parseDefun(struct LE *li, struct FScope *scope, int lvl,
         flags |= ffExplicitCast;
       } else if (strcmp("implicit-cast", l->V.S) == 0) {
         flags |= ffImplicitCast;
+      } else if (strcmp("noreturn", l->V.S) == 0) {
+        flags |= ffNoReturn;
       } else {
         compileError(*l, "unknown function property: \"%s\"", l->V.S);
       }
@@ -1929,6 +1933,16 @@ static struct FExpr parse(struct LE *l, int lvl) {
           a.Type = *a.Type.Data.Ptr.Pointee;
         }
         return a;
+      }
+      case bcSizeof: {
+        struct FType t;
+        t.Type = ttInt;
+        t.AliasUsed = NULL;
+        t.Flags = 0;
+        t.Data.Int.IntSize = 4;
+        t.Data.Int.Flags = ifSigned;
+        t.Backend = intType(ifSigned, 4);
+        return makeExpr(sizeofType(parseType(li->N, 1).Backend), t);
       }
       case bcMemb:
         return parseMemb(li->N, parse(li->N, lvl), li->N, lvl);

@@ -68,8 +68,13 @@ struct IType *getStructMemberType(struct IStructMemberIt *it);
 struct BFunction;   /* silences compiler warning */
 struct BType;       /* silences compiler warning */
 struct BStructType; /* silences compiler warning */
-enum { ifSigned = 0x1, ifCType = 0x2, ifChar = 0x4 };      /* int flags */
-enum { ffStatic = 0x1, ffInline = 0x2, ffLast = 0x4 };     /* function flags */
+enum { ifSigned = 0x1, ifCType = 0x2, ifChar = 0x4 }; /* int flags */
+enum {
+  ffStatic = 0x1,
+  ffInline = 0x2,
+  ffLast = 0x4,
+  ffNoReturn = 0x8
+};                                                         /* function flags */
 enum { gfStatic = 0x1, gfExtern = 0x2, gfVolatile = 0x4 }; /* globals flags */
 
 void initCodegen();
@@ -153,5 +158,7 @@ void breakLoop();
 void continueLoop();
 
 void addEvaluation(struct BExpr *a);
+
+struct BExpr *sizeofType(struct BType *t);
 
 #endif

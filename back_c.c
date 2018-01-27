@@ -344,8 +344,9 @@ void beginFnPrototype(const char *name, struct BType *rettype, int flags) {
 /* prints prototype; DOES NOT PRINT ');' or ') {'!!! */
 static void printProto(struct BFunction *f) {
   unsigned i;
-  printf("%s%s%s %s(", f->Flags & ffStatic ? "static " : NULLSTR,
-         f->Flags & ffInline ? "inline " : NULLSTR, f->RetType->A, f->Name);
+  printf("%s%s%s%s %s(", f->Flags & ffStatic ? "static " : NULLSTR,
+         f->Flags & ffInline ? "inline " : NULLSTR,
+         f->Flags & ffNoReturn ? "noreturn " : "", f->RetType->A, f->Name);
   for (i = 0; i < f->NParms; ++i) {
     if (i) {
       fputs(", ", stdout);
@@ -541,4 +542,8 @@ void addEvaluation(struct BExpr *a) {
   if (!(a->Flags & efNonSelfSufficient)) {
     appendString(&curfn->Body, printToMem("  %s;", a->A));
   }
+}
+
+struct BExpr *sizeofType(struct BType *t) {
+  return makeSimpleExpr(printToMem("sizeof(%s)", t->A), NULLSTR, NULLSTR, 0);
 }

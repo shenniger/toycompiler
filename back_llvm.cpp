@@ -529,3 +529,8 @@ void breakLoop() { llvmdata->B.CreateBr(lastwhile->After); }
 void continueLoop() { llvmdata->B.CreateBr(lastwhile->Cond); }
 
 void addEvaluation(struct BExpr *a) { (void)a; /* not necessary in LLVM */ }
+
+struct BExpr *sizeofType(struct BType *t) {
+  return intLiteral(
+      llvm::DataLayout(llvmdata->M.get()).getTypeAllocSize(fromType(t)));
+}
