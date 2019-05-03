@@ -62,6 +62,23 @@ static char *toOneString(struct StringListContainer c) {
   return r;
 }
 
+const char *sanitizeName(const char *name) {
+  unsigned long len;
+  char *r, *p;
+  len = strlen(name);
+  r = getMem(len + 1);
+  memcpy(r, name, len + 1);
+  p = r;
+  while (*p) {
+    if (!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+          (*p >= '0' && *p <= '9'))) {
+      *p = '_';
+    }
+    ++p;
+  }
+  return r;
+}
+
 void initCodegen() {
   puts("/* A generated C file. */");
   /*puts("#include <stdio.h>");*/
@@ -123,17 +140,17 @@ struct BStructMember {
 struct BStruct *beginStruct(const char *name) {
   struct BStruct *r;
   r = getMem(sizeof(struct BStruct));
-  r->Name = name;
-  printf("struct %s {\n", name);
+  r->Name = sanitizeName(name);
+  printf("struct %s {\n", r->Name);
   return r;
 }
 struct BStructMember *addToStruct(struct BStruct *st, const char *name,
                                   struct BType *type) {
   struct BStructMember *r;
   (void)st;
-  printf("  %s %s;\n", type->A, name);
   r = getMem(sizeof(struct BStructMember));
-  r->Name = name;
+  r->Name = sanitizeName(name);
+  printf("  %s %s;\n", type->A, r->Name);
   return r;
 }
 void endStruct(struct BStruct *st) { (void)st, puts("};"); }
@@ -216,13 +233,14 @@ struct BType *arrayType(struct BType *t, int size) {
   return makeSimpleType(printToMem("helper_%i", u));
 }
 
-struct BExpr *pointerToArray(struct BExpr *r) {
+struct BExpr *pointerToArray(struct BExpr *r, struct BType *ptrtype) {
+  (void)ptrtype;
   return r;
 }
 
 struct BExpr *derefPtr(struct BExpr *e, int isvolatileptr) {
   (void)isvolatileptr;
-  e->A = printToMem("*(%s)", e->A);
+  e->A = printToMem("(*(%s))", e->A);
   return e;
 }
 struct BExpr *refof(struct BExpr *e) {
@@ -336,7 +354,7 @@ void beginFnPrototype(const char *name, struct BType *rettype, int flags) {
   struct BFunction *last;
   last = curfn;
   curfn = getMem(sizeof(struct BFunction));
-  curfn->Name = name;
+  curfn->Name = sanitizeName(name);
   curfn->Parent = last;
   curfn->RetType = rettype;
   curfn->Flags = flags;
@@ -382,10 +400,10 @@ void endFnBody(struct BExpr *e) {
 struct BVar *addVariable(const char *name, struct BType *type, int isvolatile) {
   struct BVar *a;
   a = getMem(sizeof(struct BVar));
-  a->Name = name;
-  appendString(
-      &curfn->Var,
-      printToMem("  %s%s %s;", isvolatile ? "volatile " : "", type->A, name));
+  a->Name = sanitizeName(name);
+  appendString(&curfn->Var,
+               printToMem("  %s%s %s;", isvolatile ? "volatile " : "", type->A,
+                          a->Name));
   return a;
 }
 struct BVar *addParameter(const char *name, struct BType *type) {
@@ -396,12 +414,13 @@ struct BVar *addParameter(const char *name, struct BType *type) {
   return &curfn->Parms[curfn->NParms++].V;
 }
 struct BVar *updateParameter(struct BVar *a) {
+  a->Name = sanitizeName(a->Name);
   return a;
 }
 struct BVar *addGlobal(const char *name, struct BType *t, int flags) {
   struct BVar *a;
   a = getMem(sizeof(struct BVar));
-  a->Name = name;
+  a->Name = sanitizeName(name);
   printf("%s%s%s %s;\n",
          flags & gfExtern ? "extern " : (flags & gfStatic ? "static " : ""),
          flags & gfVolatile ? "volatile " : "", t->A, name);

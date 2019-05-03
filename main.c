@@ -116,7 +116,7 @@ void printList(struct LE *list, int depth) {
   }
 }
 
-void compileError(struct LE l, const char *fmt, ...) {
+_Noreturn void compileError(struct LE l, const char *fmt, ...) {
   va_list va;
   fprintf(stderr, "%s: ERR: ", formatSourceLoc(l));
   va_start(va, fmt);

@@ -2,16 +2,17 @@ all: test_llvm test_c chdrconv
 
 CC ?= gcc
 CXX ?= g++
+LLVM_CONFIG ?= llvm-config
 
 MODE ?= -g -O0
 
 %.o: %.c prg.h
-	$(CC) -c -Wall -Wextra -pedantic -std=c99 \
+	$(CC) -c -Wall -Wextra -pedantic -std=c11 \
 		-Wno-int-to-pointer-cast -Wno-pointer-to-int-cast $< -o $@ $(MODE)
 
 back_llvm.o: back_llvm.cpp prg.h 
 	$(CXX) -c -Wall -Wextra -pedantic -std=c++14 -o back_llvm.o back_llvm.cpp \
-		$(shell llvm-config --cxxflags --system-libs --libs core) $(MODE) \
+		$(shell $(LLVM_CONFIG) --cxxflags) $(MODE) \
 		-Wno-int-to-pointer-cast -fno-rtti
 
 test_c: main.o reader.o parser.o middle.o back_c.o
@@ -19,7 +20,7 @@ test_c: main.o reader.o parser.o middle.o back_c.o
 
 test_llvm: main.o reader.o parser.o middle.o back_llvm.o
 	$(CXX) $^ -o $@ -lm -fno-rtti \
-		$(shell llvm-config --ldflags --system-libs --libs core) $(MODE)
+		$(shell $(LLVM_CONFIG) --ldflags --system-libs --libs core) $(MODE) -lncurses
 
 chdrconv.o: chdrconv.c
 	$(CC) -c -Wall -Wextra -pedantic -std=c99 \
@@ -33,7 +34,7 @@ chdrconv: chdrconv.o
 report:
 	@echo Using C compiler: $(CC)
 	@echo Using C++/LLVM compiler: $(CXX)
-	@echo Using LLVM version: $(shell llvm-config --version)
+	@echo Using LLVM version: $(shell $(LLVM_CONFIG) --version)
 	@echo Debug/Release flags: $(MODE)
 
 clean:

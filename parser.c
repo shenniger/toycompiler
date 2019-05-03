@@ -5,7 +5,11 @@
 #include <string.h>
 
 enum { lvTop = 0x1, lvFun = 0x2, lvLoop = 0x4 };
-enum { ffExplicitCast = ffLast << 1, ffImplicitCast = ffLast << 2 };
+enum {
+  ffExplicitCast = ffLast << 1,
+  ffImplicitCast = ffLast << 2,
+  ffClosure = ffLast << 3
+};
 static struct FExpr parse(struct LE *l, int lvl);
 
 enum {
@@ -16,7 +20,8 @@ enum {
   ttPointer,
   ttFunPointer,
   ttArray,
-  ttOpaque
+  ttOpaque,
+  ttClosure
 };
 
 struct FIntType {
@@ -41,6 +46,13 @@ struct FFunPtrType {
   int NParms;
 };
 
+struct FClosure {
+  struct FFunPtrType FunPtr;
+  struct BType *FunPtrBackend;
+  struct BStructMember *StructFunPtr, *StructData;
+  struct BStruct *Composite;
+};
+
 struct FArrayType {
   struct FType *Pointee;
   int Size;
@@ -58,6 +70,7 @@ union FTypeData {
   struct FFunPtrType FunPtr;
   struct FArrayType Array;
   struct FOpaqueType Opaque;
+  struct FClosure Closure;
 };
 
 enum { tfConst = 0x1 };
@@ -199,6 +212,9 @@ static struct FGlobal *globals;
 static struct FOpaque *opaques;
 static struct FConstant *constants;
 
+static int uniqueIntAt;
+static int uniqueInt() { return ++uniqueIntAt; }
+
 static unsigned countLen(struct LE *l) {
   unsigned i;
   for (i = 0; l; l = l->N) {
@@ -208,10 +224,11 @@ static unsigned countLen(struct LE *l) {
 }
 
 unsigned long hashName(const char *s) {
+  /* djb2 algorithm */
   unsigned long res;
-  res = 0;
+  res = 5381;
   while (*s) {
-    res = (res + *s) * 11;
+    res = ((res << 5) + res) + *s;
     ++s;
   }
   return res;
@@ -316,6 +333,16 @@ static const char *printType(struct FType t) {
   case ttOpaque:
     assert(0 && "opaque type alone can not be printed");
     break;
+  case ttClosure: {
+    int i;
+    r = printToMem("('[closure-type] (%s (",
+                   printType(*t.Data.Closure.FunPtr.RetType));
+    for (i = 0; i < t.Data.Closure.FunPtr.NParms; ++i) {
+      r = printToMem("%s (%s)", r, printType(t.Data.Closure.FunPtr.Parms[i]));
+    }
+    r = printToMem("%s))", r);
+    break;
+  }
   default:
     assert(0); /* should never be reached */
   }
@@ -325,8 +352,22 @@ static const char *printType(struct FType t) {
   return r;
 }
 
+static int typeEquals(struct FType a, struct FType b);
+static int funPtrEquals(struct FFunPtrType a, struct FFunPtrType b) {
+  int i;
+  if (!typeEquals(*a.RetType, *b.RetType) || a.NParms != b.NParms) {
+    return 0;
+  }
+  for (i = 0; i < a.NParms; ++i) {
+    if (!typeEquals(a.Parms[i], b.Parms[i])) {
+      return 0;
+    }
+  }
+  return 1;
+}
 static int typeEquals(struct FType a, struct FType b) {
-  if (a.Type != b.Type || a.Flags != b.Flags) {
+  if (a.Type !=
+      b.Type /* || a.Flags != b.Flags */) { /* TODO: take care of constness */
     return 0;
   }
   switch (a.Type) {
@@ -344,23 +385,15 @@ static int typeEquals(struct FType a, struct FType b) {
            a.Data.Ptr.Flags == b.Data.Ptr.Flags &&
            typeEquals(*a.Data.Ptr.Pointee, *b.Data.Ptr.Pointee);
   case ttFunPointer: {
-    int i;
-    if (!typeEquals(*a.Data.FunPtr.RetType, *b.Data.FunPtr.RetType) ||
-        a.Data.FunPtr.NParms != b.Data.FunPtr.NParms) {
-      return 0;
-    }
-    for (i = 0; i < a.Data.FunPtr.NParms; ++i) {
-      if (!typeEquals(a.Data.FunPtr.Parms[i], b.Data.FunPtr.Parms[i])) {
-        return 0;
-      }
-    }
-    return 1;
+    return funPtrEquals(a.Data.FunPtr, b.Data.FunPtr);
   }
   case ttArray:
     return a.Data.Array.Size == b.Data.Array.Size &&
            typeEquals(*a.Data.Array.Pointee, *b.Data.Array.Pointee);
   case ttOpaque:
     return a.Data.Opaque.O == b.Data.Opaque.O;
+  case ttClosure:
+    return funPtrEquals(a.Data.Closure.FunPtr, b.Data.Closure.FunPtr);
   }
   return 0; /* should never be reached */
 }
@@ -486,6 +519,9 @@ static struct FExpr convertType(struct FExpr e, struct FType want,
   return e;
 }
 
+/* TODO: sanitize type (remove constness etc) */
+static struct FType inferType(struct FType a) { return a; }
+
 static struct FExpr parseExplicitCast(struct FExpr have, struct FType want,
                                       struct LE *li) {
   struct FExpr e;
@@ -570,6 +606,7 @@ enum {
   bcStatic,
   bcStaticRun,
   bcDefun,
+  bcLambda,
   bcFunProto,
   bcCast,
   bcStruct,
@@ -596,7 +633,7 @@ struct BuiltinCommand {
   unsigned long HashedName;
   int BuiltinCode;
 };
-static struct BuiltinCommand builtincommands[37];
+static struct BuiltinCommand builtincommands[38];
 
 enum {
   btNoBuiltin,
@@ -676,6 +713,7 @@ void initParser() {
   ADDCMD("funcall", bcFuncall)
   ADDCMD("constant", bcConstant)
   ADDCMD("sizeof", bcSizeof)
+  ADDCMD("lambda", bcLambda)
   ADDCMD("set", bcTODO_Set)
   ADDCMD("var", bcTODO_Var)
 
@@ -1109,6 +1147,257 @@ static void parseDefun(struct LE *li, struct FScope *scope, int lvl,
   }
 }
 
+static struct FExpr parseLambdaWithoutStruct(struct LE *li) {
+  /* TODO: error */
+  struct FFunction *fn, *lastfn;
+  struct LE *l, *list;
+  struct FExpr ret;
+  struct FType t;
+  struct BType **parms;
+  unsigned i;
+  fn = getMem(sizeof(struct FFunction));
+  fn->HashedName = 0;
+  fn->Name = printToMem("'<()>lambda'_ln_%i_%i", li->CharIdx, uniqueInt());
+  fn->Parent = currentffunction;
+  fn->RetType = parseType(li->N, 0);
+  fn->Flags = ffStatic;
+  beginFnPrototype(fn->Name, fn->RetType.Backend, ffStatic);
+  for (l = li->V.L; l; l = l->N) {
+    for (list = l->V.L->N; list; list = list->N) {
+      fn->Parms = moreMem(fn->Parms, sizeof(struct FParm) * fn->NParms,
+                          sizeof(struct FParm));
+      fn->Parms[fn->NParms].Name = list->V.S;
+      fn->Parms[fn->NParms].HashedName = hashName(list->V.S);
+      fn->Parms[fn->NParms].L = l->V.L;
+      fn->NParms++;
+    }
+  }
+  for (i = 0; i < fn->NParms; ++i) {
+    fn->Parms[i].Type = parseType(fn->Parms[i].L, 0);
+  }
+  for (i = 0; i < fn->NParms; ++i) {
+    fn->Parms[i].Backend =
+        addParameter(fn->Parms[i].Name, fn->Parms[i].Type.Backend);
+  }
+  fn->Last = functions;
+  functions = fn;
+  lastfn = currentffunction;
+  currentffunction = fn;
+  fn->Backend = endFnPrototype(1);
+
+  for (i = 0; i < fn->NParms; ++i) {
+    fn->Parms[i].Backend = updateParameter(fn->Parms[i].Backend);
+  }
+  ret = parse(li->N->N, lvFun);
+  if (fn->RetType.Type != ttVoid) {
+    ret = convertType(ret, fn->RetType, li->N->N);
+    endFnBody(ret.Backend);
+  } else {
+    addEvaluation(ret.Backend);
+    endFnBody(NULL);
+  }
+  functions = fn->Last;
+  currentffunction = lastfn;
+
+  parms = alloca(sizeof(struct BType *) * fn->NParms);
+  t.Type = ttFunPointer;
+  t.Flags = 0;
+  t.AliasUsed = NULL;
+  t.Data.FunPtr.Parms = getMem(sizeof(struct FType) * fn->NParms);
+  t.Data.FunPtr.NParms = fn->NParms;
+  t.Data.FunPtr.RetType = &fn->RetType;
+  for (i = 0; i < fn->NParms; ++i) {
+    t.Data.FunPtr.Parms[i] = fn->Parms[i].Type;
+    parms[i] = fn->Parms[i].Type.Backend;
+  }
+  t.Backend = fnPtrType(fn->RetType.Backend, fn->NParms, parms);
+  return makeExpr(fnRefof(fn->Backend), t);
+}
+static struct FExpr parseClosure(struct LE *li) {
+  /*
+   *
+   * Closures are a bit complicated to implement properly. Here, I have decided
+   * to use a struct of a function pointer and a data pointer which has
+   * the advantage of being compatible with the C convention.
+   *
+   * In order to create such a closure, we need to:
+   * I) create a data struct
+   * II) add a hidden local (stack) variable with an instance of that struct
+   * III) populate that variable
+   * IV) create a closure struct with a function pointer and a void pointer
+   * V) return a filled instance of that struct
+   *
+   */
+  /* TODO: error */
+  struct FFunction *fn, *lastfn;
+  struct LE *l, *list;
+  struct FExpr ret;
+  struct FType t;
+  struct BType **parms;
+  unsigned long nvars;
+  unsigned long i;
+  struct FExpr *var;
+  struct FStruct *dataType;
+  struct FVar *last;
+  fn = getMem(sizeof(struct FFunction));
+  fn->HashedName = 0;
+  fn->Name = printToMem("'<()>closure'_ln_%i_%i", li->CharIdx, uniqueInt());
+  fn->Parent = currentffunction;
+  fn->Flags = ffStatic | ffClosure;
+  {
+    nvars = countLen(li->V.L);
+    var = getMem(nvars * sizeof(struct FExpr));
+    i = 0;
+    for (l = li->V.L; l; l = l->N) {
+      var[i++] = parse(l, lvFun);
+    }
+
+    /* I) create a data struct */
+    dataType = getMem(sizeof(struct FStruct));
+    dataType->Name =
+        printToMem("'<()>closurestruct'_ln_%i_%i", li->CharIdx, uniqueInt());
+    dataType->Backend = beginStruct(dataType->Name);
+    dataType->NMembers = nvars;
+    dataType->Members = getMem(nvars * sizeof(struct FStructMember));
+    for (i = 0, l = li->V.L; i < nvars; ++i, l = l->N) {
+      dataType->Members[i].HashedName = hashName(l->V.S);
+      dataType->Members[i].Name = l->V.S;
+      dataType->Members[i].Type = inferType(var[i].Type);
+      dataType->Members[i].Backend = addToStruct(
+          dataType->Backend, l->V.S, dataType->Members[i].Type.Backend);
+      ++i;
+    }
+    endStruct(dataType->Backend);
+    /* do we actually have to add it to the global list of structs? */
+    dataType->Last = structs;
+    structs = dataType;
+
+    /* II) add a hidden local stack variable */
+    last = curscope->Vars;
+    curscope->Vars = getMem(sizeof(struct FVar));
+    curscope->Vars->Next = last;
+    curscope->Vars->Type.Type = ttStruct;
+    curscope->Vars->Type.Data.Struct.S = dataType;
+    curscope->Vars->Type.Backend = structType(dataType->Backend);
+    curscope->Vars->Name =
+        printToMem("'<()>closureinstance'_ln_%i_%i", li->CharIdx, uniqueInt());
+    curscope->Vars->HashedName = 0; /* hidden */
+    curscope->Vars->Flags = 0;
+    curscope->Vars->Backend =
+        addVariable(curscope->Vars->Name, curscope->Vars->Type.Backend, 0);
+
+    /* III) populate that variable */
+    for (i = 0, l = li->V.L; i < nvars; ++i, l = l->N) {
+      addEvaluation(
+          setVar(structMemb(varUsage(curscope->Vars->Backend, 0),
+                            dataType->Backend, dataType->Members[i].Backend),
+                 var[i].Backend));
+    }
+
+    li = li->N;
+  }
+  fn->RetType = parseType(li->N, 0);
+  beginFnPrototype(fn->Name, fn->RetType.Backend, ffStatic);
+  fn->Parms = getMem(sizeof(struct FParm));
+  fn->Parms->Name = "'<()>closurebound";
+  fn->Parms->HashedName = 0;
+  fn->Parms->Type.Type = ttPointer;
+  fn->NParms = 1;
+  for (l = li->V.L; l; l = l->N) {
+    for (list = l->V.L->N; list; list = list->N) {
+      fn->Parms = moreMem(fn->Parms, sizeof(struct FParm) * fn->NParms,
+                          sizeof(struct FParm));
+      fn->Parms[fn->NParms].Name = list->V.S;
+      fn->Parms[fn->NParms].HashedName = hashName(list->V.S);
+      fn->Parms[fn->NParms].L = l->V.L;
+      fn->NParms++;
+    }
+  }
+  fn->Parms->Type.Data.Ptr.Pointee = getMem(sizeof(struct FType));
+  fn->Parms->Type.Data.Ptr.Pointee->Type = ttStruct;
+  fn->Parms->Type.Data.Ptr.Pointee->Data.Struct.S = dataType;
+  fn->Parms->Type.Data.Ptr.Type = 1;
+  fn->Parms->Type.Backend = ptrType(voidType(), 0);
+  for (i = 0; i < fn->NParms; ++i) {
+    if (fn->Parms[i].L) {
+      fn->Parms[i].Type = parseType(fn->Parms[i].L, 0);
+    }
+  }
+  for (i = 0; i < fn->NParms; ++i) {
+    fn->Parms[i].Backend =
+        addParameter(fn->Parms[i].Name, fn->Parms[i].Type.Backend);
+  }
+  fn->Last = functions;
+  functions = fn;
+  lastfn = currentffunction;
+  currentffunction = fn;
+  fn->Backend = endFnPrototype(1);
+
+  for (i = 0; i < fn->NParms; ++i) {
+    fn->Parms[i].Backend = updateParameter(fn->Parms[i].Backend);
+  }
+  ret = parse(li->N->N, lvFun);
+  if (fn->RetType.Type != ttVoid) {
+    ret = convertType(ret, fn->RetType, li->N->N);
+    endFnBody(ret.Backend);
+  } else {
+    addEvaluation(ret.Backend);
+    endFnBody(NULL);
+  }
+  functions = fn->Last;
+  currentffunction = lastfn;
+
+  /* IV) create a closure struct with a function pointer and a pointer */
+  parms = alloca(sizeof(struct BType *) * fn->NParms);
+  t.Type = ttClosure;
+  t.Flags = 0;
+  t.AliasUsed = NULL;
+  t.Data.Closure.FunPtr.Parms = getMem(sizeof(struct FType) * fn->NParms);
+  t.Data.Closure.FunPtr.NParms = fn->NParms;
+  t.Data.Closure.FunPtr.RetType = &fn->RetType;
+  for (i = 0; i < fn->NParms; ++i) {
+    t.Data.Closure.FunPtr.Parms[i] = fn->Parms[i].Type;
+    parms[i] = fn->Parms[i].Type.Backend;
+  }
+  t.Data.Closure.FunPtrBackend =
+      fnPtrType(fn->RetType.Backend, fn->NParms, parms);
+  {
+    t.Data.Closure.Composite = beginStruct(printToMem(
+        "'<()>closurecomposite'_ln_%i_%i", li->CharIdx, uniqueInt()));
+    t.Data.Closure.StructFunPtr = addToStruct(
+        t.Data.Closure.Composite, "FunPtr", t.Data.Closure.FunPtrBackend);
+    t.Data.Closure.StructData =
+        addToStruct(t.Data.Closure.Composite, "Data", ptrType(voidType(), 0));
+    endStruct(t.Data.Closure.Composite);
+    t.Backend = structType(t.Data.Closure.Composite);
+  }
+
+  /* V) return a filled instance of that struct */
+  {
+    last = curscope->Vars;
+    curscope->Vars = getMem(sizeof(struct FVar));
+    curscope->Vars->Next = last;
+    curscope->Vars->Type = t;
+    curscope->Vars->Name =
+        printToMem("'<()>closureobject'_ln_%i_%i", li->CharIdx, uniqueInt());
+    curscope->Vars->HashedName = 0; /* hidden */
+    curscope->Vars->Flags = 0;
+    curscope->Vars->Backend =
+        addVariable(curscope->Vars->Name, curscope->Vars->Type.Backend, 0);
+
+    addEvaluation(setVar(structMemb(varUsage(curscope->Vars->Backend, 0),
+                                    t.Data.Closure.Composite,
+                                    t.Data.Closure.StructFunPtr),
+                         fnRefof(fn->Backend)));
+    addEvaluation(setVar(
+        structMemb(varUsage(curscope->Vars->Backend, 0),
+                   t.Data.Closure.Composite, t.Data.Closure.StructData),
+        castPtr(refof(varUsage(last->Backend, 0)), ptrType(voidType(), 0))));
+  }
+
+  return makeExpr(varUsage(curscope->Vars->Backend, 0), curscope->Vars->Type);
+}
+
 static struct FType resultTypeOfArmExpr(struct FType a, struct FType b,
                                         struct LE *l) {
   struct FType r;
@@ -1199,6 +1488,18 @@ static struct FExpr parseArm(struct LE *li, const char *op) {
   return e;
 }
 
+struct FExpr parsePtrRefof(struct FExpr a) {
+  struct FType *t, ty;
+  t = getMem(sizeof(struct FType));
+  *t = a.Type;
+  ty.Type = ttPointer;
+  ty.Flags = 0;
+  ty.Data.Ptr.Type = ptRaw;
+  ty.Data.Ptr.Pointee = t;
+  ty.AliasUsed = NULL;
+  return makeExpr(refof(a.Backend), ty);
+}
+
 static struct FExpr parseCmp(const char *op, struct FExpr a, struct FExpr b,
                              struct LE *l) {
   struct FExpr r;
@@ -1247,7 +1548,7 @@ static struct FExpr parseCmp(const char *op, struct FExpr a, struct FExpr b,
   return r;
 }
 
-int typeWorksAsCondition(struct FType t) { return t.Type == ttInt; }
+static int typeWorksAsCondition(struct FType t) { return t.Type == ttInt; }
 
 static struct FExpr parseIf(struct LE *li, int lvl) {
   /* TODO: errors */
@@ -1593,10 +1894,11 @@ static struct FExpr handleRef(struct FExpr e) {
     t.Type = ttPointer;
     t.Data.Ptr.Type = ptRaw;
     t.Data.Ptr.Pointee = e.Type.Data.Array.Pointee;
+    t.Data.Ptr.Flags = 0;
     t.Backend = ptrType(t.Data.Ptr.Pointee->Backend,
                         0 /* TODO: correctly handle volatile arrays */);
     /* TODO: prevent user from setting that */
-    return makeExpr(pointerToArray(e.Backend), t);
+    return makeExpr(pointerToArray(e.Backend, t.Backend), t);
   }
   return e;
 }
@@ -1605,11 +1907,27 @@ static struct FExpr parseFunPtrCall(struct FExpr fun, struct LE *li) {
   struct LE *l;
   struct BIncompleteFuncall *fnc;
   int i;
+  struct BExpr *closureData;
+  closureData = NULL;
+  if (fun.Type.Type == ttClosure) {
+    struct BTemporary *t;
+    t = addTemporary(fun.Backend, fun.Type.Backend);
+    closureData = structMemb(tmpInstance(t), fun.Type.Data.Closure.Composite,
+                             fun.Type.Data.Closure.StructData);
+    fun.Backend = structMemb(tmpInstance(t), fun.Type.Data.Closure.Composite,
+                             fun.Type.Data.Closure.StructFunPtr);
+    fun.Type.Type = ttFunPointer;
+    fun.Type.Data.FunPtr = fun.Type.Data.Closure.FunPtr;
+  }
   if (fun.Type.Type != ttFunPointer) {
-    compileError(*li, "expected function pointer");
+    compileError(*li, "expected function pointer or closure");
   }
   fnc = beginFunPtrCall(fun.Backend);
   i = 0;
+  if (closureData) {
+    addArg(fnc, closureData);
+    ++i;
+  }
   for (l = li->N; l; l = l->N) {
     if (i == fun.Type.Data.FunPtr.NParms) {
       compileError(*li, "this function pointer requires %i arguments, found %i",
@@ -1685,6 +2003,7 @@ static struct FExpr parse(struct LE *l, int lvl) {
     t.AliasUsed = NULL;
     t.Flags = 0;
     t.Data.Ptr.Type = ptRaw;
+    t.Data.Ptr.Flags = 0;
     t.Data.Ptr.Pointee = getMem(sizeof(struct FType));
     t.Data.Ptr.Pointee->Type = ttInt;
     t.Data.Ptr.Pointee->AliasUsed = NULL;
@@ -1724,6 +2043,24 @@ static struct FExpr parse(struct LE *l, int lvl) {
       if (gl->HashedName == hash && strcmp(gl->Name, l->V.S) == 0) {
         return handleRef(
             makeExpr(varUsage(gl->Backend, gl->Flags & gfVolatile), gl->Type));
+      }
+    }
+    if (currentffunction->Flags & ffClosure) {
+      struct BVar *mystruct;
+      struct FStruct *s;
+      assert(currentffunction->NParms && "not enough closure parameters");
+      mystruct = currentffunction->Parms[0].Backend;
+      s = currentffunction->Parms[0].Type.Data.Ptr.Pointee->Data.Struct.S;
+      for (i = 0; i < s->NMembers; ++i) {
+        if (s->Members[i].HashedName == hash &&
+            strcmp(s->Members[i].Name, l->V.S) == 0) {
+          return handleRef(makeExpr(
+              structMemb(derefPtr(castPtr(varUsage(mystruct, 0),
+                                          ptrType(structType(s->Backend), 0)),
+                                  0),
+                         s->Backend, s->Members[i].Backend),
+              s->Members[i].Type));
+        }
       }
     }
     for (c = constants; c; c = c->Last) {
@@ -1781,6 +2118,17 @@ static struct FExpr parse(struct LE *l, int lvl) {
       case bcFunProto:
         parseDefun(li->N, curscope, lvl, 1);
         break;
+      case bcLambda: {
+        switch (countLen(li->N)) {
+        case 3:
+          return parseLambdaWithoutStruct(li->N);
+        case 4:
+          return parseClosure(li->N);
+        default:
+          compileError(*li, "invalid lambda syntax");
+          break; /* never reached; used to silence compiler warning */
+        }
+      }
       case bcCast:
         /* TODO: error */
         return parseExplicitCast(parse(li->N->N, lvl), parseType(li->N, 0), li);
@@ -1808,6 +2156,7 @@ static struct FExpr parse(struct LE *l, int lvl) {
       case bcTODO_Var: {
         struct FVar *last;
         int flags;
+        flags = 0;
         if (li->N->N->T == tyList) {
           /* TODO: this is a syntactic irregularity */
           struct LE *l;
@@ -1892,19 +2241,8 @@ static struct FExpr parse(struct LE *l, int lvl) {
       case bcGlobal:
         parseGlobal(li->N);
         break;
-      case bcPtrRefof: {
-        struct FExpr a;
-        struct FType *t, ty;
-        a = parse(li->N, lvl);
-        t = getMem(sizeof(struct FType));
-        *t = a.Type;
-        ty.Type = ttPointer;
-        ty.Flags = 0;
-        ty.Data.Ptr.Type = ptRaw;
-        ty.Data.Ptr.Pointee = t;
-        ty.AliasUsed = NULL;
-        return makeExpr(refof(a.Backend), ty);
-      }
+      case bcPtrRefof:
+        return parsePtrRefof(parse(li->N, lvl));
       case bcPtrDeref: {
         struct FExpr a;
         a = parse(li->N, lvl);

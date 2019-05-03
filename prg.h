@@ -28,7 +28,7 @@ void readList(char *s, struct LE **l, const char *filebegin,
               unsigned short fileidx);
 
 const char *formatSourceLoc(struct LE l);
-void compileError(struct LE l, const char *fmt, ...);
+_Noreturn void compileError(struct LE l, const char *fmt, ...);
 void compileHint(struct LE l, const char *fmt, ...);
 
 struct LE *readFileAsList(const char *name);
@@ -97,7 +97,7 @@ struct BType *fnPtrType(struct BType *rettype, int nparms,
                         struct BType **parms);
 struct BType *arrayType(struct BType *t, int size);
 
-struct BExpr *pointerToArray(struct BExpr *r);
+struct BExpr *pointerToArray(struct BExpr *r, struct BType *ptrtype);
 
 void constType(struct BType *t);
 

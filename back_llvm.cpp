@@ -1,4 +1,12 @@
 extern "C" {
+/* clang-format off */
+#define _Noreturn [[noreturn]] /* pointless C/C++ incompatibility %(/$)(/&$%/ */
+/* clang-format on */
+/*
+ * clang-format needs to be disabled here because it removes the whitespace
+ * between macro name and expansion.
+ *
+ */
 #include "prg.h"
 }
 
@@ -8,6 +16,8 @@ extern "C" {
 #include <iterator>
 #include <map>
 #include <memory>
+#include <stack>
+#include <utility>
 
 #include <llvm/ADT/APFloat.h>
 #include <llvm/ADT/STLExtras.h>
@@ -24,11 +34,14 @@ extern "C" {
 
 using namespace llvm;
 
+using InsertPoint = std::pair<llvm::BasicBlock *, llvm::BasicBlock::iterator>;
+
 struct Singleton {
   LLVMContext C;
   IRBuilder<> B;
   std::unique_ptr<Module> M;
   std::map<std::string, Value *> NamedValues;
+  std::stack<InsertPoint> InsertPoints;
   Singleton() : B(C) { M = llvm::make_unique<Module>("test", C); }
 };
 
@@ -80,10 +93,10 @@ struct BExpr *structMemb(struct BExpr *st, struct BStruct *type,
   Value *l = fromExpr(st);
   if (isa<LoadInst>(l)) {
     /* TODO: this is a terrible workaround, solve better */
-    /* TODO: THIS BREAKS struct comparisons!!! */
-    Value *old = l;
+    // Value *old = l;
     l = cast<LoadInst>(l)->getPointerOperand();
-    static_cast<LoadInst *>(old)->eraseFromParent();
+    // static_cast<LoadInst *>(old)->eraseFromParent();
+    // TODO: SOLVE THIS BETTER! This creates an unnecessary `load`!
   }
   return derefPtr(toExpr(static_cast<Value *>(llvmdata->B.CreateStructGEP(
                       NULL, l, n - 1, "structmemb"))),
@@ -170,14 +183,15 @@ struct BType *arrayType(struct BType *t, int size) {
   return toType(static_cast<Type *>(ArrayType::get(fromType(t), size)));
 }
 
-struct BExpr *pointerToArray(struct BExpr *r) {
-  std::vector<Value *> idxlist;
-  idxlist.resize(2);
-  idxlist[0] = ConstantInt::get(
-      static_cast<Type *>(Type::getInt64Ty(llvmdata->C)), 0, true);
-  idxlist[1] = idxlist[0];
-  return toExpr(static_cast<Value *>(
-      llvmdata->B.CreateInBoundsGEP(fromExpr(r), idxlist, "arraygep")));
+struct BExpr *pointerToArray(struct BExpr *r, struct BType *ptrtype) {
+  Value *l = fromExpr(r);
+  if (isa<LoadInst>(l)) {
+    /* TODO: this is a terrible workaround, solve better */
+    Value *old = l;
+    l = cast<LoadInst>(l)->getPointerOperand();
+    static_cast<LoadInst *>(old)->eraseFromParent();
+  }
+  return toExpr(llvmdata->B.CreateBitCast(l, fromType(ptrtype), "arraydecay"));
 }
 
 struct BExpr *derefPtr(struct BExpr *e, int isvolatileptr) {
@@ -219,7 +233,13 @@ struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b,
                            int result_flags, int result_size, int ptr) {
   (void)result_size;
   (void)result_flags;
-/* TODO: ptr!!! */
+  if (ptr && strcmp(op, "+") == 0) {
+    std::vector<Value *> idxlist;
+    idxlist.resize(1);
+    idxlist[0] = fromExpr(b);
+    return toExpr(static_cast<Value *>(
+        llvmdata->B.CreateInBoundsGEP(fromExpr(a), idxlist, "ptradd")));
+  }
 #define OP(str, fun)                                                           \
   if (strcmp(op, str) == 0) {                                                  \
     return toExpr(llvmdata->B.fun(fromExpr(a), fromExpr(b), "armtmp"));        \
@@ -241,8 +261,8 @@ struct BExpr *arithmeticOp(const char *op, struct BExpr *a, struct BExpr *b,
   OP(">=", CreateICmpSGE)
 
 #undef OP
-  /* TODO: op etc */
-  return toExpr(llvmdata->B.CreateAdd(fromExpr(a), fromExpr(b)));
+  assert(!"arithmetic operation unknown to the LLVM backend");
+  return NULL; /* never reached, used to silence compiler warning */
 }
 struct BExpr *unaryOp(char op, struct BExpr *a, int result_flags,
                       int result_size) {
@@ -328,10 +348,18 @@ struct BFunction *endFnPrototype(int addBody) {
   }
   curfn->F = f;
   if (addBody) {
+    if (llvmdata->B.GetInsertBlock()) {
+      llvmdata->InsertPoints.push(InsertPoint{llvmdata->B.GetInsertBlock(),
+                                              llvmdata->B.GetInsertPoint()});
+    }
     BasicBlock *block = BasicBlock::Create(llvmdata->C, "entry", curfn->F);
     llvmdata->B.SetInsertPoint(block);
+    return toFunction(curfn->F);
+  } else {
+    struct BIncompleteFunction *f = curfn;
+    curfn = curfn->Parent;
+    return toFunction(f->F);
   }
-  return toFunction(curfn->F);
 }
 void endFnBody(struct BExpr *e) {
   if (e) {
@@ -340,6 +368,16 @@ void endFnBody(struct BExpr *e) {
     llvmdata->B.CreateRetVoid();
   }
   verifyFunction(*curfn->F, &llvm::errs());
+
+  if (llvmdata->InsertPoints.size()) {
+    const auto &top = llvmdata->InsertPoints.top();
+    llvmdata->B.SetInsertPoint(top.first, top.second);
+    llvmdata->InsertPoints.pop();
+  } else {
+    llvmdata->B.ClearInsertionPoint();
+  }
+
+  curfn = curfn->Parent;
 }
 
 struct BVar *addVariable(const char *name, struct BType *type, int) {
@@ -371,8 +409,10 @@ struct BVar *addGlobal(const char *name, struct BType *t, int flags) {
 }
 struct BExpr *varUsage(struct BVar *p, int isvolatilevar) {
   Value *v = fromVar(p);
-  if (isa<AllocaInst>(v)) {
-    return toExpr(llvmdata->B.CreateLoad(v, isvolatilevar, "varusage"));
+  if (isa<AllocaInst>(v) /* && !isa<ArrayType>(v->getType())*/) {
+    if (!isa<StructType>(static_cast<AllocaInst *>(v)->getAllocatedType())) {
+      return toExpr(llvmdata->B.CreateLoad(v, isvolatilevar, "varusage"));
+    }
   }
   return toExpr(v);
 }

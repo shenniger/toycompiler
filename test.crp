@@ -46,26 +46,37 @@
 ;(defun get-y ((A a)) float (memb a y))
 ;(defun isgreater ((float a b)) float (+ a b))
 
-(constant abc 10)
-(constant def 32)
+; (constant abc 10)
+; (constant def 32)
+;
+; (defun getStuff (((opaque-ptr Point) a)) (opaque-ptr Point) a)
+;
+; (struct Point ((i32 x y)))
+; (struct Size ((i32 w h)))
+; (defun (implicit-cast) cast-point-to-size ((Point p)) Size (
+;   (var Size (volatile) r)
+;   (set (memb r w) (memb p x))
+;   (set (memb r h) (memb p y))
+;  r))
+; (funproto use-size ((Size s)) void)
+; (defun user ((Point p)) void (use-size p))
+;
+; (defun try (((opaque-ptr Point) a)) Size
+;   (ptr-deref (getStuff a)))
+;
+; (global (volatile static) a (i32))
+; (defun set-a ((i32 g)) void (set a g))
+; (defun nonneg ((Point a)) i32 (if (< (memb a x) 0) (memb a y) (memb a x)))
+;
+; (defun (noreturn) get () i32 (+ abc def (sizeof Point)))
 
-(defun getStuff (((opaque-ptr Point) a)) (opaque-ptr Point) a)
+(defun runlambda ((i32 a b)) i32 (
+  (funcall (lambda ((i32 a b)) i32 (+ a b)) 3 4)))
 
-(struct Point ((i32 x y)))
-(struct Size ((i32 w h)))
-(defun (implicit-cast) cast-point-to-size ((Point p)) Size (
-  (var Size (volatile) r)
-  (set (memb r w) (memb p x))
-  (set (memb r h) (memb p y))
- r))
-(funproto use-size ((Size s)) void)
-(defun user ((Point p)) void (use-size p))
+(defun runclosure ((i32 a b)) i32 (
+  (funcall (lambda (b) ((i32 a)) i32 (+ a b)) a)))
 
-(defun try (((opaque-ptr Point) a)) Size
-  (ptr-deref (getStuff a)))
-
-(global (volatile static) a (i32))
-(defun set-a ((i32 g)) void (set a g))
-(defun nonneg ((Point a)) i32 (if (< (memb a x) 0) (memb a y) (memb a x)))
-
-(defun (noreturn) get () i32 (+ abc def (sizeof Point)))
+(funproto printnum ((i32 x)) void)
+(defun main () i32 (
+  (printnum (runclosure 3 4))
+ 0))
