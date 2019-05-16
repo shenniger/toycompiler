@@ -1,6 +1,5 @@
 *.bak
 *.swp
-test*
 chdrconv
 a.out
 callgrind.*

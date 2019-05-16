@@ -1,0 +1,16 @@
+(funproto puts (((ptr const char) str)) i32)
+(alias FILE (opaque-ptr FILE))
+(funproto fopen (((ptr const char) filename mode)) FILE)
+(funproto fread (((ptr char) ptr) (u64 size nmemb) (FILE f)) u64)
+(funproto fwrite (((ptr const char) ptr) (u64 size nmemb) (FILE f)) u64)
+(funproto fclose ((FILE f)) i32)
+
+(defun main () i32 (
+  (var FILE myfile)
+  (var (array 64 char) buf)
+  (set myfile (fopen "test2.crp" "r"))
+  (fread buf (cast u64 1) (cast u64 64) myfile)
+  (set (ptr-deref (+ buf 63)) (cast char 0))
+  (puts "Hello, world.")
+  (puts buf)
+ 0))
